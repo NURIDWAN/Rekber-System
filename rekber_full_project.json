@@ -1,0 +1,186 @@
+{
+    "project_name": "Rekber Room System",
+    "description": "A 21-room escrow system where Buyer and Seller do not register. GM is the only role with global login. Sessions per room control access.",
+    "entities": {
+        "rooms": {
+            "fields": [
+                "id",
+                "room_number",
+                "status"
+            ],
+            "status_values": [
+                "free",
+                "in_use"
+            ],
+            "description": "Represents 1 of 21 available transaction rooms."
+        },
+        "room_users": {
+            "fields": [
+                "id",
+                "room_id",
+                "name",
+                "phone",
+                "role",
+                "session_token",
+                "joined_at",
+                "is_online",
+                "last_seen"
+            ],
+            "roles": [
+                "buyer",
+                "seller"
+            ],
+            "description": "Stores users (buyer/seller) joining a specific room, includes online tracking."
+        },
+        "gm_users": {
+            "fields": [
+                "id",
+                "name",
+                "email",
+                "password"
+            ],
+            "description": "Global user login for the GM/Admin."
+        },
+        "room_activity_logs": {
+            "fields": [
+                "id",
+                "room_id",
+                "action",
+                "user_name",
+                "role",
+                "description",
+                "timestamp"
+            ],
+            "description": "Tracks every event inside a room."
+        },
+        "room_messages": {
+            "fields": [
+                "id",
+                "room_id",
+                "sender_role",
+                "sender_name",
+                "message",
+                "type",
+                "created_at"
+            ],
+            "type_values": [
+                "text",
+                "image",
+                "system"
+            ],
+            "description": "Stores chat messages exchanged inside a room."
+        }
+    },
+    "flow": {
+        "buyer_entry": [
+            "Buyer chooses a FREE room",
+            "Buyer enters info: name, phone",
+            "System assigns role=buyer",
+            "Room status becomes IN USE",
+            "Session token generated and stored",
+            "Buyer is redirected to room interface"
+        ],
+        "seller_entry": [
+            "Seller sees room marked IN USE",
+            "Seller fills name & phone",
+            "System assigns role=seller",
+            "Seller session token saved",
+            "Seller redirected to room interface"
+        ],
+        "gm_flow": [
+            "GM logs in via email/password",
+            "GM enters any room for verification",
+            "GM validates proof & updates transaction status",
+            "GM can send system chat messages",
+            "GM can reset room after completion"
+        ],
+        "transaction_flow": [
+            "Buyer uploads proof of payment (image)",
+            "GM verifies payment",
+            "Seller uploads shipping receipt",
+            "Buyer confirms receipt",
+            "GM marks transaction complete",
+            "System resets room to FREE and clears user sessions"
+        ],
+        "chat_flow": [
+            "User enters room \u2192 Frontend connects to Pusher/WebSocket",
+            "User sends message \u2192 POST /room/{id}/message",
+            "Message saved \u2192 broadcast event RoomMessageSent",
+            "All connected clients update chat in real-time"
+        ]
+    },
+    "security": {
+        "session_rules": [
+            "Buyer/Seller locked to their room only",
+            "Cannot join another room while active",
+            "Seller cannot join FREE room",
+            "Buyer cannot join buyer-filled room",
+            "Session token stored in http-only cookies",
+            "Room access validated via middleware"
+        ],
+        "gm_rules": [
+            "Only GM can reset room",
+            "GM can enter all rooms with admin privilege",
+            "GM actions logged in room_activity_logs"
+        ],
+        "connection_rules": [
+            "WebSocket connection monitored for online/offline",
+            "User presence tracked via Pusher presence channels",
+            "Disconnect triggers room_users.last_seen update"
+        ]
+    },
+    "api_endpoints": {
+        "public": [
+            "GET /rooms",
+            "GET /room/{id}",
+            "POST /room/{id}/join",
+            "POST /room/{id}/enter",
+            "GET /room/{id}/messages",
+            "POST /room/{id}/message"
+        ],
+        "gm": [
+            "POST /gm/login",
+            "GET /gm/dashboard",
+            "GET /gm/room/{id}",
+            "POST /gm/room/{id}/reset"
+        ]
+    },
+    "websocket": {
+        "channels": {
+            "public": [
+                "room-{id}"
+            ],
+            "presence": [
+                "presence-room-{id}"
+            ]
+        },
+        "events": [
+            "RoomMessageSent",
+            "RoomUserOnline",
+            "RoomUserOffline",
+            "ConnectionStatusChanged"
+        ],
+        "frontend_behavior": {
+            "connected": "Show green status indicator",
+            "reconnecting": "Show yellow status indicator",
+            "disconnected": "Show red status indicator and retry every 3s"
+        }
+    },
+    "ui_ux": {
+        "room_interface": [
+            "Real-time chat panel",
+            "Payment instruction box",
+            "Upload proof modal",
+            "Upload resi modal",
+            "Activity timeline",
+            "GM message panel",
+            "Online/offline indicators"
+        ],
+        "room_list": [
+            "21 clickable room cards",
+            "Status: free/in_use",
+            "Buyer/Seller icons showing filled or empty",
+            "Join buttons disabled when role filled"
+        ]
+    }
+}

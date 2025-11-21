@@ -21,6 +21,12 @@ return Application::configure(basePath: dirname(__DIR__))
             HandleInertiaRequests::class,
             AddLinkHeadersForPreloadedAssets::class,
         ]);
+
+        $middleware->alias([
+            'gm.auth' => \App\Http\Middleware\GmAuth::class,
+            'room.session' => \App\Http\Middleware\RoomSession::class,
+            'room.token' => \App\Http\Middleware\ValidateRoomToken::class,
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //
