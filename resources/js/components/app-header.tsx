@@ -79,40 +79,66 @@ export function AppHeader({ breadcrumbs = [] }: AppHeaderProps) {
                                 <div className="flex h-full flex-1 flex-col space-y-4 p-4">
                                     <div className="flex h-full flex-col justify-between text-sm">
                                         <div className="flex flex-col space-y-4">
-                                            {mainNavItems.map((item) => (
+                                            {sidebarNav.map((section) => (
+                                                <div key={section.title} className="space-y-2">
+                                                    {section.title && (
+                                                        <div className="px-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+                                                            {section.title}
+                                                        </div>
+                                                    )}
+                                                    {section.items.map((item) => {
+                                                        if (item.divider) {
+                                                            return <div key="divider" className="my-2 border-t border-neutral-200 dark:border-neutral-700" />;
+                                                        }
+                                                        return (
+                                                            <Link
+                                                                key={item.href}
+                                                                href={item.href}
+                                                                className={cn(
+                                                                    'flex items-center space-x-2 font-medium rounded-md px-2 py-1.5 transition-colors',
+                                                                    isSameUrl(page.url, item.href)
+                                                                        ? 'bg-neutral-100 text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100'
+                                                                        : 'text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100'
+                                                                )}
+                                                            >
+                                                                {item.icon && (
+                                                                    <Icon
+                                                                        iconNode={item.icon}
+                                                                        className="h-4 w-4"
+                                                                    />
+                                                                )}
+                                                                <span className="flex-1">{item.title}</span>
+                                                                {item.badge && (
+                                                                    <span className="ml-auto rounded-full bg-red-500 px-1.5 py-0.5 text-xs text-white">
+                                                                        {item.badge}
+                                                                    </span>
+                                                                )}
+                                                            </Link>
+                                                        );
+                                                    })}
+                                                </div>
+                                            ))}
+                                        </div>
+
+                                        <div className="flex flex-col space-y-2 mt-4">
+                                            {quickActions.filter(item => !item.divider).map((item) => (
                                                 <Link
-                                                    key={item.title}
+                                                    key={item.href}
                                                     href={item.href}
-                                                    className="flex items-center space-x-2 font-medium"
+                                                    className="flex items-center space-x-2 font-medium text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
+                                                    {...(item.isExternal && {
+                                                        target: '_blank',
+                                                        rel: 'noopener noreferrer'
+                                                    })}
                                                 >
                                                     {item.icon && (
                                                         <Icon
                                                             iconNode={item.icon}
-                                                            className="h-5 w-5"
+                                                            className="h-4 w-4"
                                                         />
                                                     )}
                                                     <span>{item.title}</span>
                                                 </Link>
-                                            ))}
-                                        </div>
-
-                                        <div className="flex flex-col space-y-4">
-                                            {rightNavItems.map((item) => (
-                                                <a
-                                                    key={item.title}
-                                                    href={resolveUrl(item.href)}
-                                                    target="_blank"
-                                                    rel="noopener noreferrer"
-                                                    className="flex items-center space-x-2 font-medium"
-                                                >
-                                                    {item.icon && (
-                                                        <Icon
-                                                            iconNode={item.icon}
-                                                            className="h-5 w-5"
-                                                        />
-                                                    )}
-                                                    <span>{item.title}</span>
-                                                </a>
                                             ))}
                                         </div>
                                     </div>
@@ -133,35 +159,44 @@ export function AppHeader({ breadcrumbs = [] }: AppHeaderProps) {
                     <div className="ml-6 hidden h-full items-center space-x-6 lg:flex">
                         <NavigationMenu className="flex h-full items-stretch">
                             <NavigationMenuList className="flex h-full items-stretch space-x-2">
-                                {mainNavItems.map((item, index) => (
-                                    <NavigationMenuItem
-                                        key={index}
-                                        className="relative flex h-full items-center"
-                                    >
-                                        <Link
-                                            href={item.href}
-                                            className={cn(
-                                                navigationMenuTriggerStyle(),
-                                                isSameUrl(
-                                                    page.url,
-                                                    item.href,
-                                                ) && activeItemStyles,
-                                                'h-9 cursor-pointer px-3',
-                                            )}
+                                {mainNav.map((item, index) => {
+                                    if (item.divider) return null;
+                                    return (
+                                        <NavigationMenuItem
+                                            key={item.href}
+                                            className="relative flex h-full items-center"
                                         >
-                                            {item.icon && (
-                                                <Icon
-                                                    iconNode={item.icon}
-                                                    className="mr-2 h-4 w-4"
-                                                />
+                                            <Link
+                                                href={item.href}
+                                                className={cn(
+                                                    navigationMenuTriggerStyle(),
+                                                    isSameUrl(page.url, item.href) && activeItemStyles,
+                                                    'h-9 cursor-pointer px-3',
+                                                )}
+                                                {...(item.isExternal && {
+                                                    target: '_blank',
+                                                    rel: 'noopener noreferrer'
+                                                })}
+                                            >
+                                                {item.icon && (
+                                                    <Icon
+                                                        iconNode={item.icon}
+                                                        className="mr-2 h-4 w-4"
+                                                    />
+                                                )}
+                                                {item.title}
+                                                {item.badge && (
+                                                    <span className="ml-2 rounded-full bg-red-500 px-1.5 py-0.5 text-xs text-white">
+                                                        {item.badge}
+                                                    </span>
+                                                )}
+                                            </Link>
+                                            {isSameUrl(page.url, item.href) && (
+                                                <div className="absolute bottom-0 left-0 h-0.5 w-full translate-y-px bg-black dark:bg-white"></div>
                                             )}
-                                            {item.title}
-                                        </Link>
-                                        {isSameUrl(page.url, item.href) && (
-                                            <div className="absolute bottom-0 left-0 h-0.5 w-full translate-y-px bg-black dark:bg-white"></div>
-                                        )}
-                                    </NavigationMenuItem>
-                                ))}
+                                        </NavigationMenuItem>
+                                    );
+                                })}
                             </NavigationMenuList>
                         </NavigationMenu>
                     </div>
@@ -176,9 +211,9 @@ export function AppHeader({ breadcrumbs = [] }: AppHeaderProps) {
                                 <Search className="!size-5 opacity-80 group-hover:opacity-100" />
                             </Button>
                             <div className="hidden lg:flex">
-                                {rightNavItems.map((item) => (
+                                {quickActions.filter(item => item.isExternal).map((item) => (
                                     <TooltipProvider
-                                        key={item.title}
+                                        key={item.href}
                                         delayDuration={0}
                                     >
                                         <Tooltip>
@@ -197,6 +232,11 @@ export function AppHeader({ breadcrumbs = [] }: AppHeaderProps) {
                                                             iconNode={item.icon}
                                                             className="size-5 opacity-80 group-hover:opacity-100"
                                                         />
+                                                    )}
+                                                    {item.badge && (
+                                                        <span className="absolute -top-1 -right-1 flex h-3 w-3 items-center justify-center rounded-full bg-red-500 text-[10px] text-white">
+                                                            {item.badge}
+                                                        </span>
                                                     )}
                                                 </a>
                                             </TooltipTrigger>

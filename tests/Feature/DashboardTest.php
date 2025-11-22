@@ -2,7 +2,7 @@
 
 namespace Tests\Feature;
 
-use App\Models\User;
+use App\Models\GmUser;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -17,8 +17,12 @@ class DashboardTest extends TestCase
 
     public function test_authenticated_users_can_visit_the_dashboard()
     {
-        $this->actingAs($user = User::factory()->create());
+        $gmUser = GmUser::factory()->create([
+            'email_verified_at' => now(),
+        ]);
 
-        $this->get(route('dashboard'))->assertOk();
+        $this->actingAs($gmUser, 'gm')
+            ->get(route('dashboard'))
+            ->assertOk();
     }
 }

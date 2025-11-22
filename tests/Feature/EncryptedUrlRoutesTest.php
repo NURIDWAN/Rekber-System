@@ -28,7 +28,7 @@ class EncryptedUrlRoutesTest extends TestCase
         $room = Room::factory()->create();
         $token = $this->roomUrlService->generateToken($room->id, 'buyer');
 
-        $response = $this->get("/rooms/{$token}/join");
+        $response = $this->followingRedirects()->get("/rooms/{$token}/join");
 
         $response->assertStatus(200);
         $response->assertViewIs('rooms.join');
@@ -59,10 +59,10 @@ class EncryptedUrlRoutesTest extends TestCase
         $room = Room::factory()->create();
         $token = $this->roomUrlService->generateToken($room->id, 'buyer');
 
-        $response = $this->get("/rooms/{$token}/enter");
+        $response = $this->followingRedirects()->get("/rooms/{$token}/enter");
 
         // Should redirect to join page when no session exists
-        $response->assertRedirect("/rooms/{$token}/join");
+        $response->assertViewIs('rooms.join');
     }
 
     /**
@@ -217,6 +217,7 @@ class EncryptedUrlRoutesTest extends TestCase
         $this->mock(RoomUrlService::class, function ($mock) {
             $mock->shouldReceive('decryptToken')
                 ->andReturn(null); // Simulate expired token
+            $mock->shouldReceive('decryptRoomId')->andReturn(null);
         });
 
         $token = 'expired.token.string';
@@ -234,7 +235,7 @@ class EncryptedUrlRoutesTest extends TestCase
         $room = Room::factory()->create();
         $token = $this->roomUrlService->generateToken($room->id, 'seller');
 
-        $response = $this->get("/rooms/{$token}/join");
+        $response = $this->followingRedirects()->get("/rooms/{$token}/join");
 
         $response->assertStatus(200);
         $response->assertViewHas('role', 'seller');
@@ -316,5 +317,18 @@ class EncryptedUrlRoutesTest extends TestCase
             url("/rooms/{$token}/enter"),
             route('rooms.enter.token', ['token' => $token])
         );
+    }
+
+    /**
+     * Visiting /rooms/{token} (tanpa /join) harus diarahkan ke halaman join token
+     */
+    public function test_direct_token_room_route_redirects_to_join(): void
+    {
+        $room = Room::factory()->create();
+        $token = $this->roomUrlService->generateToken($room->id, 'buyer', '1234');
+
+        $response = $this->get("/rooms/{$token}");
+
+        $response->assertRedirect(route('rooms.join.token', ['token' => $token, 'pin' => '1234']));
     }
 }

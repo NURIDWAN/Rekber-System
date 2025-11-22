@@ -158,9 +158,9 @@ export default function ChatInterface({ roomId }: ChatInterfaceProps) {
   }
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full min-h-0 flex flex-col">
       {/* Messages Area */}
-      <ScrollArea className="flex-1 p-4">
+      <ScrollArea className="flex-1 min-h-0 p-4">
         <div className="space-y-4">
           {selectedRoom.messages.length === 0 ? (
             <div className="text-center text-gray-500 py-8">

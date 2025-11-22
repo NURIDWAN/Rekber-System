@@ -12,26 +12,57 @@ interface PageProps {
         has_seller: boolean;
         buyer_name?: string;
         seller_name?: string;
+        current_user_role?: string;
+        current_user_name?: string;
     };
     role: 'buyer' | 'seller';
+    share_links: {
+        buyer: { join: string; enter: string };
+        seller: { join: string; enter: string };
+        pin?: string | null;
+        pin_enabled?: boolean;
+    };
+    token?: string;
     errors?: Record<string, string>;
 }
 
-export default function JoinRoomPage({ room, role, errors: serverErrors = {} }: PageProps) {
-    const { data, setData, post, processing, errors, reset } = useForm({
+export default function JoinRoomPage({ room, role, share_links, errors: serverErrors = {} }: PageProps) {
+    const { data, setData, errors, reset } = useForm({
         name: '',
         phone: '',
         role: role,
     });
 
-    const isBuyer = role === 'buyer';
-    const isAvailable = isBuyer ? room.status === 'free' : room.status === 'in_use' && room.has_buyer;
+    const [selectedRole, setSelectedRole] = useState<'buyer' | 'seller'>(role);
+    const [joining, setJoining] = useState(false);
+    const [joinError, setJoinError] = useState<string | null>(null);
+    const [existingUser, setExistingUser] = useState<boolean>(false);
+    const isBuyer = selectedRole === 'buyer';
+
+    // Check if user already exists for this role
+    const isRoleAvailable = isBuyer
+        ? !room.has_buyer
+        : room.has_buyer && !room.has_seller;
+
+    // Check if current user is already registered for this role (using backend data)
+    const isCurrentUserAlreadyRegistered = room.current_user_role === role;
 
     useEffect(() => {
-        if (!isAvailable) {
+        // If current user is already registered for this role, redirect to room
+        if (isCurrentUserAlreadyRegistered) {
+            setExistingUser(true);
+            const encryptedId = window.location.pathname.split('/')[2];
+            console.log('Current user already registered, redirecting to room');
+            router.visit(`/rooms/${encryptedId}`);
+            return;
+        }
+
+        // If role is not available and user is not registered, redirect to rooms list
+        if (!isRoleAvailable) {
+            console.log('Role not available, redirecting to rooms list');
             router.visit('/rooms');
         }
-    }, [isAvailable]);
+    }, [isRoleAvailable, isCurrentUserAlreadyRegistered]);
 
     useEffect(() => {
         // Merge server errors with form errors
@@ -40,20 +71,98 @@ export default function JoinRoomPage({ room, role, errors: serverErrors = {} }: 
         }
     }, [serverErrors]);
 
-    const handleSubmit = (e: React.FormEvent) => {
-        e.preventDefault();
-        post(`/rooms/${room.id}/join?role=${role}`, {
-            onSuccess: () => {
-                // Navigation will be handled by server redirect
-                reset();
-            },
-            onError: (errors) => {
-                console.error('Form errors:', errors);
-            }
-        });
+    useEffect(() => {
+        setData('role', selectedRole);
+    }, [selectedRole]);
+
+    const getTokenFromLink = (link?: string) => {
+        if (!link) return '';
+        try {
+            const url = new URL(link);
+            const parts = url.pathname.split('/');
+            return parts[2] ?? '';
+        } catch (e) {
+            return '';
+        }
     };
 
-    if (!isAvailable) {
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+
+        // Don't allow form submission if user is already registered or being redirected
+        if (existingUser || isCurrentUserAlreadyRegistered) {
+            return;
+        }
+
+        const link = share_links[selectedRole]?.join;
+        const token = getTokenFromLink(link);
+        if (!token) {
+            return;
+        }
+
+        try {
+            setJoining(true);
+            setJoinError(null);
+            const response = await fetch(`/api/room/${token}/join-with-token`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': (document.querySelector('meta[name="csrf-token"]') as HTMLMetaElement)?.content || '',
+                },
+                body: JSON.stringify({
+                    name: data.name,
+                    phone: data.phone,
+                    pin: share_links.pin ?? null,
+                })
+            });
+
+            if (!response.ok) {
+                const err = await response.json().catch(() => ({}));
+                console.error('Join failed', err);
+                setJoinError(err.message || 'Failed to join room. Please try again.');
+                return;
+            }
+
+            const result = await response.json();
+            const sessionToken = result?.data?.session_token;
+            if (sessionToken) {
+                // Use the actual room ID from the API response to match server-side cookie naming
+                const roomId = result?.data?.room_id || room.id;
+                document.cookie = `room_session_${roomId}=${sessionToken};path=/;max-age=${60 * 120}`;
+                console.log(`Setting session cookie for room ${roomId}:`, sessionToken);
+            }
+            reset();
+            const enterUrl = share_links[selectedRole]?.enter;
+            if (enterUrl) {
+                router.visit(enterUrl);
+            } else {
+                // Fallback: use encrypted room ID if available, otherwise use original
+                const encryptedId = window.location.pathname.split('/')[2];
+                router.visit(`/rooms/${encryptedId}`);
+            }
+        } catch (error) {
+            console.error('Join error', error);
+        } finally {
+            setJoining(false);
+        }
+    };
+
+    // Show loading state while checking if user is already registered
+    if (existingUser || isCurrentUserAlreadyRegistered) {
+        return (
+            <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center">
+                <div className="text-center">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                    <h1 className="text-xl font-semibold text-slate-900 mb-2">Redirecting to Room</h1>
+                    <p className="text-slate-600">
+                        You are already registered for this room. Redirecting you there now...
+                    </p>
+                </div>
+            </div>
+        );
+    }
+
+    if (!isRoleAvailable) {
         return (
             <div className="min-h-screen bg-gradient-to-br from-slate-50 to-red-50 flex items-center justify-center">
                 <div className="text-center">
@@ -61,6 +170,9 @@ export default function JoinRoomPage({ room, role, errors: serverErrors = {} }: 
                     <h1 className="text-2xl font-bold text-slate-900 mb-2">Room Not Available</h1>
                     <p className="text-slate-600 mb-6">
                         This room is not available for {isBuyer ? 'buyers' : 'sellers'} at the moment.
+                        {isBuyer && room.has_buyer && " A buyer is already registered."}
+                        {!isBuyer && !room.has_buyer && " A buyer must join first before a seller can join."}
+                        {!isBuyer && room.has_seller && " A seller is already registered."}
                     </p>
                     <Link
                         href="/rooms"
@@ -164,6 +276,12 @@ export default function JoinRoomPage({ room, role, errors: serverErrors = {} }: 
                                 </div>
                             )}
 
+                            {joinError && (
+                                <div className="mb-4 rounded-xl bg-red-50 border border-red-200 p-4">
+                                    <p className="text-sm text-red-600">{joinError}</p>
+                                </div>
+                            )}
+
                             <form onSubmit={handleSubmit} className="space-y-4">
                                 <div>
                                     <label htmlFor="name" className="block text-sm font-medium text-slate-700 mb-2">
@@ -229,7 +347,7 @@ export default function JoinRoomPage({ room, role, errors: serverErrors = {} }: 
 
                                 <button
                                     type="submit"
-                                    disabled={processing || !data.name || !data.phone}
+                                    disabled={joining || !data.name || !data.phone}
                                     className={cn(
                                         'w-full flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold text-white transition',
                                         isBuyer
@@ -238,7 +356,7 @@ export default function JoinRoomPage({ room, role, errors: serverErrors = {} }: 
                                         'disabled:cursor-not-allowed'
                                     )}
                                 >
-                                    {processing ? (
+                                    {joining ? (
                                         <>
                                             <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
                                             Joining Room...

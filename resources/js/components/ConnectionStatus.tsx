@@ -1,6 +1,11 @@
 import React, { useState, useEffect } from 'react'
 import { Badge } from '@/components/ui/badge'
-import { getConnectionStatus, onConnectionChange } from '@/lib/pusher'
+import {
+  getConnectionStatus,
+  onConnectionEstablished,
+  onConnectionError,
+  onConnectionDisconnected,
+} from '@/lib/websocket'
 import { Wifi, WifiOff, Loader2 } from 'lucide-react'
 
 export default function ConnectionStatus() {
@@ -8,11 +13,21 @@ export default function ConnectionStatus() {
   const [isOnline, setIsOnline] = useState(navigator.onLine)
 
   useEffect(() => {
-    // Get initial Pusher connection status
+    // Get initial connection status
     setStatus(getConnectionStatus())
 
-    // Listen for Pusher connection changes
-    const unsubscribe = onConnectionChange(setStatus)
+    // Listen for connection events
+    const unsubscribeConnected = onConnectionEstablished(() => {
+      setStatus('connected')
+    })
+
+    const unsubscribeError = onConnectionError(() => {
+      setStatus('disconnected')
+    })
+
+    const unsubscribeDisconnected = onConnectionDisconnected(() => {
+      setStatus('disconnected')
+    })
 
     // Listen for browser online/offline events
     const handleOnline = () => setIsOnline(true)
@@ -22,7 +37,9 @@ export default function ConnectionStatus() {
     window.addEventListener('offline', handleOffline)
 
     return () => {
-      unsubscribe?.()
+      unsubscribeConnected()
+      unsubscribeError()
+      unsubscribeDisconnected()
       window.removeEventListener('online', handleOnline)
       window.removeEventListener('offline', handleOffline)
     }

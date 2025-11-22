@@ -17,10 +17,14 @@ class GmAuth
     public function handle(Request $request, Closure $next): Response
     {
         if (!Auth::guard('gm')->check()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Unauthorized. GM login required.',
-            ], 401);
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized. GM login required.',
+                ], 401);
+            }
+
+            return redirect()->guest('/login');
         }
 
         return $next($request);

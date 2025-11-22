@@ -2,11 +2,14 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Room extends Model
 {
+    use HasFactory;
     protected $fillable = [
         'room_number',
         'status',
@@ -19,6 +22,11 @@ class Room extends Model
     public function roomUsers(): HasMany
     {
         return $this->hasMany(RoomUser::class);
+    }
+
+    public function users(): HasMany
+    {
+        return $this->roomUsers();
     }
 
     public function buyer(): HasMany
@@ -39,6 +47,21 @@ class Room extends Model
     public function messages(): HasMany
     {
         return $this->hasMany(RoomMessage::class);
+    }
+
+    public function transaction(): HasOne
+    {
+        return $this->hasOne(Transaction::class);
+    }
+
+    public function transactions(): HasMany
+    {
+        return $this->hasMany(Transaction::class);
+    }
+
+    public function invitations(): HasMany
+    {
+        return $this->hasMany(RoomInvitation::class);
     }
 
     public function isAvailableForBuyer(): bool

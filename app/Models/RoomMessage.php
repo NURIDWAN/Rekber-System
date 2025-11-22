@@ -22,6 +22,10 @@ class RoomMessage extends Model
 
     public $timestamps = false;
 
+    protected $dispatchesEvents = [
+        'created' => \App\Events\RoomMessageSent::class,
+    ];
+
     public function room(): BelongsTo
     {
         return $this->belongsTo(Room::class);

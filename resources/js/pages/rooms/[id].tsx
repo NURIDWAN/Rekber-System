@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react'
-import { Head, Link } from '@inertiajs/react'
+import { Head } from '@inertiajs/react'
 import { useRoom } from '@/contexts/RoomContext'
 import { useAuth } from '@/contexts/AuthContext'
 import RekberProvider from '@/components/RekberProvider'
+import RoomsNavbar from '@/components/RoomsNavbar'
+import { encryptRoomId } from '@/lib/roomUrlUtils'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -17,8 +19,7 @@ import {
   Clock,
   Truck,
   AlertCircle,
-  Settings,
-  ArrowLeft
+  Settings
 } from 'lucide-react'
 import JoinRoomModal from '@/components/JoinRoomModal'
 import ChatInterface from '@/components/ChatInterface'
@@ -147,48 +148,13 @@ function RoomDetailContent({ room }: { room: any }) {
     <div className="min-h-screen bg-gray-50">
       <Head title={`Room ${selectedRoom.room_number} - Rekber System`} />
 
-      {/* Header */}
-      <div className="bg-white border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center space-x-4">
-              <Link href="/rooms">
-                <Button variant="ghost" size="sm">
-                  <ArrowLeft className="w-4 h-4 mr-2" />
-                  Back to Rooms
-                </Button>
-              </Link>
-              <div>
-                <h1 className="text-xl font-semibold text-gray-900">Room {selectedRoom.room_number}</h1>
-                <div className="flex items-center space-x-2">
-                  <Badge
-                    className={getTransactionStatusColor(selectedRoom.transactionStatus)}
-                    variant="secondary"
-                  >
-                    {getTransactionStatusIcon(selectedRoom.transactionStatus)}
-                    <span className="ml-1 capitalize">
-                      {selectedRoom.transactionStatus.replace('_', ' ')}
-                    </span>
-                  </Badge>
-                  <Badge variant={selectedRoom.status === 'free' ? 'default' : 'secondary'}>
-                    {selectedRoom.status === 'free' ? 'Available' : 'In Use'}
-                  </Badge>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex items-center space-x-3">
-              <ConnectionStatus />
-              {isGM && (
-                <Button variant="outline" size="sm">
-                  <Settings className="w-4 h-4 mr-2" />
-                  GM Settings
-                </Button>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
+      <RoomsNavbar
+        roomNumber={selectedRoom.room_number}
+        roomStatus={selectedRoom.status}
+        onLeaveRoom={() => window.location.href = '/rooms'}
+        currentUser={currentUser}
+        encryptedRoomId={encryptRoomId(selectedRoom.id)}
+      />
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

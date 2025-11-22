@@ -2,6 +2,7 @@
 
 namespace App\Events;
 
+use App\Models\RoomMessage;
 use Illuminate\Broadcasting\Channel;
 use Illuminate\Broadcasting\InteractsWithSockets;
 use Illuminate\Broadcasting\PresenceChannel;
@@ -14,18 +15,14 @@ class RoomMessageSent implements ShouldBroadcast
 {
     use Dispatchable, InteractsWithSockets, SerializesModels;
 
-    public $room;
     public $message;
-    public $sender;
 
     /**
      * Create a new event instance.
      */
-    public function __construct($room, $message, $sender)
+    public function __construct(RoomMessage $message)
     {
-        $this->room = $room;
         $this->message = $message;
-        $this->sender = $sender;
     }
 
     /**
@@ -36,26 +33,32 @@ class RoomMessageSent implements ShouldBroadcast
     public function broadcastOn(): array
     {
         return [
-            new Channel('room-' . $this->room->id),
-            new PresenceChannel('presence-room-' . $this->room->id),
+            new Channel('room-' . $this->message->room_id),
+            new PresenceChannel('presence-room-' . $this->message->room_id),
         ];
     }
 
-    public function broadcastAs()
+    /**
+     * The event's broadcast name.
+     */
+    public function broadcastAs(): string
     {
-        return 'RoomMessageSent';
+        return 'new-message';
     }
 
-    public function broadcastWith()
+    /**
+     * Get the data to broadcast.
+     */
+    public function broadcastWith(): array
     {
         return [
             'id' => $this->message->id,
-            'room_id' => $this->room->id,
+            'room_id' => $this->message->room_id,
             'sender_role' => $this->message->sender_role,
             'sender_name' => $this->message->sender_name,
             'message' => $this->message->message,
             'type' => $this->message->type,
-            'created_at' => $this->message->created_at,
+            'created_at' => $this->message->created_at->toISOString(),
         ];
     }
 }

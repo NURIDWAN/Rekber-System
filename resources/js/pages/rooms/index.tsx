@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Link } from '@inertiajs/react';
+import { Head, Link } from '@inertiajs/react';
 import {
     ArrowRight,
     BadgeCheck,
@@ -11,41 +11,41 @@ import {
     Zap,
 } from 'lucide-react';
 
-import MarketingLayout from '@/layouts/marketing-layout';
+import RoomsNavbar from '@/components/RoomsNavbar';
+import ShareRoomModal from '@/components/ShareRoomModal';
+import JoinRoomModal from '@/components/JoinRoomModal';
+import { useRealtimeRooms } from '@/hooks/useRealtimeRooms';
 import { cn } from '@/lib/utils';
+import { getRoomUrl, getJoinUrl } from '@/lib/roomUrlUtils';
 
 type RoomStatus = 'free' | 'in-use';
 
 type Room = {
     id: number;
     status: RoomStatus;
-    lastActivity: string;
-    participants: string[];
+    lastActivity?: string;
+    participants?: string[];
+    has_buyer?: boolean;
+    has_seller?: boolean;
+    available_for_buyer?: boolean;
+    available_for_seller?: boolean;
+    room_number?: number;
+    links?: {
+        buyer: { join: string; enter: string };
+        seller: { join: string; enter: string };
+    };
+    encrypted_urls?: {
+        show: string;
+        join: string;
+        join_seller: string;
+        pin?: string;
+        pin_enabled?: boolean;
+    };
 };
 
-const rooms: Room[] = [
-    { id: 1, status: 'free', lastActivity: '3 min ago', participants: ['Buyer', 'Seller', 'GM'] },
-    { id: 2, status: 'in-use', lastActivity: '5 min ago', participants: ['Buyer', 'Seller', 'GM'] },
-    { id: 3, status: 'in-use', lastActivity: '9 min ago', participants: ['Buyer', 'Seller', 'GM'] },
-    { id: 4, status: 'free', lastActivity: '14 min ago', participants: ['Buyer', 'Seller', 'GM'] },
-    { id: 5, status: 'in-use', lastActivity: '58 min ago', participants: ['Buyer', 'Seller', 'GM'] },
-    { id: 6, status: 'free', lastActivity: '23 min ago', participants: ['Buyer', 'Seller', 'GM'] },
-    { id: 7, status: 'in-use', lastActivity: '22 min ago', participants: ['Buyer', 'Seller', 'GM'] },
-    { id: 8, status: 'free', lastActivity: '33 min ago', participants: ['Buyer', 'Seller', 'GM'] },
-    { id: 9, status: 'free', lastActivity: '47 min ago', participants: ['Buyer', 'Seller', 'GM'] },
-    { id: 10, status: 'in-use', lastActivity: '18 min ago', participants: ['Buyer', 'Seller', 'GM'] },
-    { id: 11, status: 'free', lastActivity: '30 min ago', participants: ['Buyer', 'Seller', 'GM'] },
-    { id: 12, status: 'in-use', lastActivity: '33 min ago', participants: ['Buyer', 'Seller', 'GM'] },
-    { id: 13, status: 'in-use', lastActivity: '48 min ago', participants: ['Buyer', 'Seller', 'GM'] },
-    { id: 14, status: 'free', lastActivity: '26 min ago', participants: ['Buyer', 'Seller', 'GM'] },
-    { id: 15, status: 'in-use', lastActivity: '30 min ago', participants: ['Buyer', 'Seller', 'GM'] },
-    { id: 16, status: 'free', lastActivity: '35 min ago', participants: ['Buyer', 'Seller', 'GM'] },
-    { id: 17, status: 'free', lastActivity: '38 min ago', participants: ['Buyer', 'Seller', 'GM'] },
-    { id: 18, status: 'free', lastActivity: '44 min ago', participants: ['Buyer', 'Seller', 'GM'] },
-    { id: 19, status: 'free', lastActivity: '50 min ago', participants: ['Buyer', 'Seller', 'GM'] },
-    { id: 20, status: 'in-use', lastActivity: '57 min ago', participants: ['Buyer', 'Seller', 'GM'] },
-    { id: 21, status: 'free', lastActivity: '61 min ago', participants: ['Buyer', 'Seller', 'GM'] },
-];
+type RoomsPageProps = {
+    rooms: Room[];
+};
 
 const filters: { label: string; value: RoomStatus | 'all' }[] = [
     { label: 'All', value: 'all' },
@@ -53,13 +53,18 @@ const filters: { label: string; value: RoomStatus | 'all' }[] = [
     { label: 'In Use', value: 'in-use' },
 ];
 
-export default function RoomsIndex() {
+export default function RoomsIndex({ rooms }: RoomsPageProps) {
     const [active, setActive] = useState<(typeof filters)[number]['value']>('all');
     const [search, setSearch] = useState('');
+    const [shareModalOpen, setShareModalOpen] = useState(false);
+    const [joinModalOpen, setJoinModalOpen] = useState(false);
+    const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
+
+    const { rooms: realtimeRooms, isConnected, connectionError, isRoomAvailableForSharing } = useRealtimeRooms(rooms);
 
     const filtered = useMemo(
         () =>
-            rooms.filter((room) => {
+            realtimeRooms.filter((room) => {
                 const matchFilter = active === 'all' ? true : room.status === active;
                 const matchSearch = room.id
                     .toString()
@@ -67,15 +72,36 @@ export default function RoomsIndex() {
                     .includes(search.toLowerCase());
                 return matchFilter && matchSearch;
             }),
-        [active, search],
+        [active, search, realtimeRooms],
     );
 
+    const handleShareClick = (room: Room) => {
+        setSelectedRoom(room);
+        setShareModalOpen(true);
+    };
+
+    const handleCloseShareModal = () => {
+        setShareModalOpen(false);
+        setSelectedRoom(null);
+    };
+
+    const handleJoinClick = (room: Room) => {
+        setSelectedRoom(room);
+        setJoinModalOpen(true);
+    };
+
+    const handleCloseJoinModal = () => {
+        setJoinModalOpen(false);
+        setSelectedRoom(null);
+    };
+
     return (
-        <MarketingLayout
-            title="Rooms – RoomEscrow"
-            description="Pilih room escrow yang siap dipakai atau cek aktivitas terbaru."
-            className="font-['Sora','Plus_Jakarta_Sans',sans-serif]"
-        >
+        <>
+            <Head title="Rooms – RoomEscrow" />
+            <div className="min-h-screen bg-gradient-to-b from-[#eef2ff] via-white to-[#eef7ff]">
+                <RoomsNavbar />
+
+                <main className="font-['Sora','Plus_Jakarta_Sans',sans-serif]">
             <section className="mx-auto max-w-6xl px-4 pt-12 lg:px-6">
                 <div className="flex flex-wrap items-center justify-between gap-4">
                     <div>
@@ -97,9 +123,18 @@ export default function RoomsIndex() {
                             <ShieldCheck className="size-4" />
                             GM Portal
                         </Link>
-                        <div className="flex items-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm ring-1 ring-slate-200">
-                            <Zap className="size-4 text-amber-500" />
-                            Live synced
+                        <div
+                        className={`flex items-center gap-2 rounded-2xl px-4 py-3 text-sm font-semibold shadow-sm ring-1 cursor-pointer transition-all ${
+                            isConnected
+                                ? 'bg-white text-slate-700 ring-slate-200 hover:bg-slate-50'
+                                : connectionError
+                                    ? 'bg-orange-50 text-orange-700 ring-orange-200 hover:bg-orange-100'
+                                    : 'bg-red-50 text-red-700 ring-red-200 hover:bg-red-100'
+                        }`}
+                        title={connectionError || (isConnected ? 'WebSocket connected' : 'WebSocket disconnected')}
+                    >
+                            <Zap className={`size-4 ${isConnected ? 'text-amber-500' : connectionError ? 'text-orange-500' : 'text-red-500'}`} />
+                            {isConnected ? 'Live synced' : connectionError ? 'Connection issue' : 'Connection lost'}
                         </div>
                     </div>
                 </div>
@@ -137,55 +172,92 @@ export default function RoomsIndex() {
 
             <section className="mx-auto max-w-6xl px-4 pb-16 pt-6 lg:px-6">
                 <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                    {filtered.map((room) => (
-                        <div
-                            key={room.id}
-                            className="rounded-3xl border border-white/70 bg-white/90 p-5 shadow-[0_20px_60px_-28px_rgba(26,46,96,0.35)] ring-1 ring-slate-100 backdrop-blur transition hover:-translate-y-1 hover:shadow-2xl"
-                        >
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <p className="text-sm font-semibold text-slate-500">
-                                        Room #{room.id.toString().padStart(2, '0')}
-                                    </p>
-                                    <p className="text-base font-semibold text-slate-900">
-                                        Participants
-                                    </p>
+                    {filtered.map((room) => {
+                        // Use helper functions to get proper encrypted URLs
+                        const joinAction = getJoinUrl(room);
+                        const joinLink = joinAction?.url;
+                        const joinLabel = joinAction?.label || 'Join Room';
+                        const joinDisabled = !joinLink;
+
+                        // Prepare share links for modal
+                        const shareLinks = {
+                            buyer: {
+                                join: room.encrypted_urls?.join || '',
+                                enter: room.links?.buyer?.enter || ''
+                            },
+                            seller: {
+                                join: room.encrypted_urls?.join_seller || '',
+                                enter: room.links?.seller?.enter || ''
+                            },
+                            pin: room.encrypted_urls?.pin,
+                            pin_enabled: room.encrypted_urls?.pin_enabled
+                        };
+
+                        return (
+                            <div
+                                key={room.id}
+                                className="rounded-3xl border border-white/70 bg-white/90 p-5 shadow-[0_20px_60px_-28px_rgba(26,46,96,0.35)] ring-1 ring-slate-100 backdrop-blur transition hover:-translate-y-1 hover:shadow-2xl"
+                            >
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <p className="text-sm font-semibold text-slate-500">
+                                            Room #{room.id.toString().padStart(2, '0')}
+                                        </p>
+                                        <p className="text-base font-semibold text-slate-900">
+                                            Participants
+                                        </p>
+                                    </div>
+                                    <span
+                                        className={cn(
+                                            'rounded-full px-3 py-1 text-xs font-bold',
+                                            room.status === 'free'
+                                                ? 'bg-emerald-50 text-emerald-600 ring-1 ring-emerald-100'
+                                                : 'bg-rose-50 text-rose-600 ring-1 ring-rose-100',
+                                        )}
+                                    >
+                                        {room.status === 'free' ? 'Free' : 'In Use'}
+                                    </span>
                                 </div>
-                                <span
-                                    className={cn(
-                                        'rounded-full px-3 py-1 text-xs font-bold',
-                                        room.status === 'free'
-                                            ? 'bg-emerald-50 text-emerald-600 ring-1 ring-emerald-100'
-                                            : 'bg-rose-50 text-rose-600 ring-1 ring-rose-100',
+                                <div className="mt-3 flex items-center gap-2 text-slate-600">
+                                    <Users className="size-4 text-slate-500" />
+                                    {room.participants?.join('  •  ') ?? 'Buyer  •  Seller  •  GM'}
+                                </div>
+                                <div className="mt-3 flex items-center gap-2 text-sm text-slate-500">
+                                    <Clock4 className="size-4" />
+                                    Last activity: {room.lastActivity || 'Just now'}
+                                </div>
+                                <div className="mt-4 flex flex-wrap gap-3">
+                                    {joinLink ? (
+                                        <button
+                                            type="button"
+                                            onClick={() => handleJoinClick(room)}
+                                            className="inline-flex flex-1 items-center justify-center gap-2 rounded-2xl bg-[#2a4bff] px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-300 transition hover:-translate-y-0.5"
+                                        >
+                                            {joinLabel}
+                                        </button>
+                                    ) : (
+                                        <div className="inline-flex flex-1 items-center justify-center gap-2 rounded-2xl bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-400 ring-1 ring-gray-200 cursor-not-allowed">
+                                            {joinLabel}
+                                        </div>
                                     )}
-                                >
-                                    {room.status === 'free' ? 'Free' : 'In Use'}
-                                </span>
+                                    {isRoomAvailableForSharing(room) ? (
+                                        <button
+                                            type="button"
+                                            onClick={() => handleShareClick(room)}
+                                            className="inline-flex items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-slate-700 ring-1 ring-slate-200 transition hover:bg-slate-50"
+                                            title="Share room link"
+                                        >
+                                            <Link2 className="size-4" />
+                                        </button>
+                                    ) : (
+                                        <div className="inline-flex items-center justify-center gap-2 rounded-2xl bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-400 ring-1 ring-gray-200 cursor-not-allowed">
+                                            <Link2 className="size-4" />
+                                        </div>
+                                    )}
+                                </div>
                             </div>
-                            <div className="mt-3 flex items-center gap-2 text-slate-600">
-                                <Users className="size-4 text-slate-500" />
-                                {room.participants.join('  •  ')}
-                            </div>
-                            <div className="mt-3 flex items-center gap-2 text-sm text-slate-500">
-                                <Clock4 className="size-4" />
-                                Last activity: {room.lastActivity}
-                            </div>
-                            <div className="mt-4 flex flex-wrap gap-3">
-                                <Link
-                                    href={`/rooms/${room.id}`}
-                                    className="inline-flex flex-1 items-center justify-center gap-2 rounded-2xl bg-[#2a4bff] px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-300 transition hover:-translate-y-0.5"
-                                >
-                                    {room.status === 'free' ? 'Join Room' : 'Enter Room'}
-                                </Link>
-                                <button
-                                    type="button"
-                                    className="inline-flex items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-slate-700 ring-1 ring-slate-200 transition hover:bg-slate-50"
-                                >
-                                    <Link2 className="size-4" />
-                                </button>
-                            </div>
-                        </div>
-                    ))}
+                        );
+                    })}
                 </div>
             </section>
 
@@ -235,7 +307,7 @@ export default function RoomsIndex() {
                         </div>
                     </div>
                     <Link
-                        href="/rooms/3"
+                        href={rooms.length > 0 ? getRoomUrl(rooms[0]) : "/rooms/3"}
                         className="inline-flex items-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-slate-900 shadow-lg shadow-slate-800/10 transition hover:-translate-y-0.5"
                     >
                         Lihat contoh room detail
@@ -243,6 +315,69 @@ export default function RoomsIndex() {
                     </Link>
                 </div>
             </section>
-        </MarketingLayout>
+
+            {/* Share Room Modal */}
+            {selectedRoom && (
+                <ShareRoomModal
+                    isOpen={shareModalOpen}
+                    onClose={handleCloseShareModal}
+                    roomId={selectedRoom.id}
+                    roomNumber={selectedRoom.room_number?.toString() || selectedRoom.id.toString()}
+                    roomStatus={selectedRoom.status}
+                    needsBuyer={selectedRoom.available_for_buyer || false}
+                    needsSeller={selectedRoom.available_for_seller || false}
+                    tokenExpiryMinutes={5}
+                />
+            )}
+
+            {/* Join Room Modal */}
+            {selectedRoom && (
+                <JoinRoomModal
+                    isOpen={joinModalOpen}
+                    onClose={handleCloseJoinModal}
+                    roomId={selectedRoom.id}
+                    roomNumber={selectedRoom.room_number?.toString() || selectedRoom.id.toString()}
+                    roomStatus={selectedRoom.status as 'free' | 'in_use'}
+                    shareLinks={{
+                        buyer: {
+                            join: selectedRoom.encrypted_urls?.join || '',
+                            enter: selectedRoom.links?.buyer?.enter || ''
+                        },
+                        seller: {
+                            join: selectedRoom.encrypted_urls?.join_seller || '',
+                            enter: selectedRoom.links?.seller?.enter || ''
+                        },
+                        pin: selectedRoom.encrypted_urls?.pin,
+                        pin_enabled: selectedRoom.encrypted_urls?.pin_enabled
+                    }}
+                />
+            )}
+
+                {/* Footer */}
+                </main>
+
+                <footer className="mx-auto max-w-6xl px-4 pb-10 pt-6 text-sm text-slate-600 lg:px-6 mt-16">
+                    <div className="flex flex-col gap-4 border-t border-slate-200/70 pt-6 lg:flex-row lg:items-center lg:justify-between">
+                        <div className="flex items-center gap-3">
+                            <div className="flex size-10 items-center justify-center rounded-2xl bg-slate-900 text-white">
+                                <ShieldCheck className="size-5" />
+                            </div>
+                            <div>
+                                <p className="text-base font-semibold text-slate-900">
+                                    RoomEscrow
+                                </p>
+                                <p>Secure trades, transparent collaboration.</p>
+                            </div>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-4">
+                            <a href="/terms" className="hover:text-slate-900">Terms</a>
+                            <a href="/privacy" className="hover:text-slate-900">Privacy</a>
+                            <a href="/contact" className="hover:text-slate-900">Contact</a>
+                            <p className="text-slate-400">© 2024 RoomEscrow</p>
+                        </div>
+                    </div>
+                </footer>
+            </div>
+        </>
     );
 }

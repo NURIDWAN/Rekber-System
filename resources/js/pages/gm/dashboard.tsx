@@ -8,6 +8,7 @@ import { Progress } from '@/components/ui/progress'
 import { useAuth } from '@/contexts/AuthContext'
 import RekberProvider from '@/components/RekberProvider'
 import { ShareUrlModal } from '@/components/ShareUrlModal'
+import { getRoomUrl } from '@/lib/roomUrlUtils'
 import {
   Users,
   MessageCircle,
@@ -277,7 +278,7 @@ function GMDashboardContent({ rooms, stats }: GMDashboardProps) {
                         className="flex-1"
                         onClick={(e) => {
                           e.stopPropagation()
-                          window.location.href = `/rooms/${room.id}`
+                          window.location.href = getRoomUrl(room)
                         }}
                       >
                         <Eye className="w-3 h-3 mr-1" />

@@ -1,6 +1,7 @@
 import { Head, Link, router } from '@inertiajs/react';
 import { useState, useEffect } from 'react';
 import { cn } from '@/lib/utils';
+import { getRoomUrl, getJoinUrl } from '@/lib/roomUrlUtils';
 import {
     ArrowRight,
     User,
@@ -152,45 +153,31 @@ export default function RoomsPage({ rooms: initialRooms }: PageProps) {
                                 </div>
 
                                 <div className="space-y-2">
-                                    <Link
-                                        href={`/rooms/${room.id}/join?role=buyer`}
-                                        className={cn(
-                                            'w-full flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold transition',
-                                            room.available_for_buyer
-                                                ? 'bg-blue-600 text-white hover:bg-blue-700'
-                                                : 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                                        )}
-                                        onClick={(e) => {
-                                            if (!room.available_for_buyer) {
-                                                e.preventDefault();
-                                            }
-                                        }}
-                                    >
-                                        <User className="w-3 h-3" />
-                                        Join as Buyer
-                                    </Link>
-
-                                    <Link
-                                        href={`/rooms/${room.id}/join?role=seller`}
-                                        className={cn(
-                                            'w-full flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold transition',
-                                            room.available_for_seller
-                                                ? 'bg-purple-600 text-white hover:bg-purple-700'
-                                                : 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                                        )}
-                                        onClick={(e) => {
-                                            if (!room.available_for_seller) {
-                                                e.preventDefault();
-                                            }
-                                        }}
-                                    >
-                                        <ShoppingCart className="w-3 h-3" />
-                                        Join as Seller
-                                    </Link>
+                                    {(() => {
+                                        const joinAction = getJoinUrl(room);
+                                        return joinAction ? (
+                                            <Link
+                                                href={joinAction.url}
+                                                className="w-full flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold transition"
+                                            >
+                                                {joinAction.label === 'Join as Buyer' ? (
+                                                    <>
+                                                        <User className="w-3 h-3" />
+                                                        Join as Buyer
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <ShoppingCart className="w-3 h-3" />
+                                                        Join as Seller
+                                                    </>
+                                                )}
+                                            </Link>
+                                        ) : null;
+                                    })()}
 
                                     {room.has_buyer || room.has_seller ? (
                                         <Link
-                                            href={`/rooms/${room.id}/enter`}
+                                            href={getRoomUrl(room)}
                                             className="w-full flex items-center justify-center gap-2 rounded-xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
                                         >
                                             <ArrowRight className="w-3 h-3" />

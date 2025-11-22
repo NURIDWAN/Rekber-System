@@ -16,7 +16,7 @@ class GmUserSeeder extends Seeder
         GmUser::create([
             'name' => 'Game Master',
             'email' => 'gm@rekber.com',
-            'password' => 'password123',
+            'password' => 'password123', // Model will hash automatically
             'created_at' => now(),
             'updated_at' => now(),
         ]);

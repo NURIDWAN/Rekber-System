@@ -49,4 +49,19 @@ class User extends Authenticatable
             'two_factor_confirmed_at' => 'datetime',
         ];
     }
+
+    public function verification()
+    {
+        return $this->hasOne(UserVerification::class);
+    }
+
+    public function isVerified(): bool
+    {
+        return $this->verification && $this->verification->isVerified();
+    }
+
+    public function isVerificationPending(): bool
+    {
+        return $this->verification && $this->verification->isPending();
+    }
 }

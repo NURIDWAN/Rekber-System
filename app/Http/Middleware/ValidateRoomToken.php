@@ -16,7 +16,8 @@ class ValidateRoomToken
      */
     public function handle(Request $request, Closure $next): Response
     {
-        $token = $request->route('token');
+        $route = $request->route();
+        $token = $route ? $route->parameter('token') : $request->get('token');
 
         if (!$token) {
             return response()->json([
@@ -35,11 +36,23 @@ class ValidateRoomToken
             ], 400);
         }
 
+        // Enforce optional PIN if present
+        if (!empty($decrypted['pin'])) {
+            $providedPin = $request->get('pin');
+            if (!$providedPin || $providedPin !== $decrypted['pin']) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'PIN is required for this link',
+                ], 403);
+            }
+        }
+
         // Add decrypted data to request for later use
         $request->merge([
             'room_id_from_token' => $decrypted['room_id'],
             'role_from_token' => $decrypted['role'],
             'token_timestamp' => $decrypted['timestamp'],
+            'pin_from_token' => $decrypted['pin'] ?? null,
         ]);
 
         return $next($request);

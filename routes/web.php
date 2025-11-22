@@ -3,10 +3,27 @@
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 use Laravel\Fortify\Features;
+use Laravel\Fortify\Http\Controllers\AuthenticatedSessionController;
+use Laravel\Fortify\Http\Controllers\TwoFactorAuthenticatedSessionController;
+
+$roomIdPattern = '(?:rm_[A-Za-z0-9_-]+|\d+)';
+$tokenPattern = '[A-Za-z0-9_-]+';
+
+Route::pattern('room', $roomIdPattern);
 
 Route::get('/', function () {
     return Inertia::render('home');
 })->name('home');
+
+// Breeze tests expect these route names
+// POST login for regular users (Fortify)
+Route::post('/login', [AuthenticatedSessionController::class, 'store'])
+    ->middleware(['guest', 'throttle:login'])
+    ->name('login.store');
+
+Route::get('/two-factor-challenge', [TwoFactorAuthenticatedSessionController::class, 'create'])
+    ->middleware('guest')
+    ->name('two-factor.login');
 
 // Public Room Routes
 Route::get('/rooms', function () {
@@ -16,10 +33,22 @@ Route::get('/rooms', function () {
     ->orderBy('room_number')
     ->get()
     ->map(function ($room) {
+        $shareLinks = app(\App\Services\RoomUrlService::class)->generateShareableLinks($room->id);
+        $participants = [];
+        if ($room->hasBuyer()) {
+            $participants[] = 'Buyer';
+        }
+        if ($room->hasSeller()) {
+            $participants[] = 'Seller';
+        }
+        $participants[] = 'GM';
+
+        $roomUrlService = app(\App\Services\RoomUrlService::class);
+
         return [
             'id' => $room->id,
             'room_number' => $room->room_number,
-            'status' => $room->status,
+            'status' => $room->status === 'in_use' ? 'in-use' : $room->status,
             'has_buyer' => $room->hasBuyer(),
             'has_seller' => $room->hasSeller(),
             'buyer_name' => $room->users()->where('role', 'buyer')->first()?->name,
@@ -28,6 +57,13 @@ Route::get('/rooms', function () {
             'seller_online' => $room->users()->where('role', 'seller')->where('is_online', true)->exists(),
             'available_for_buyer' => $room->isAvailableForBuyer(),
             'available_for_seller' => $room->isAvailableForSeller(),
+            'participants' => $participants,
+            'links' => $shareLinks,
+            'encrypted_urls' => [
+                'show' => $roomUrlService->generateRoomUrl($room->id),
+                'join' => $roomUrlService->generateRoomJoinUrl($room->id, 'buyer'),
+                'join_seller' => $roomUrlService->generateRoomJoinUrl($room->id, 'seller'),
+            ],
         ];
     });
 
@@ -38,7 +74,7 @@ Route::get('/rooms', function () {
 
 Route::get('/rooms/{room}/join', function ($room) {
     $roomModel = \App\Models\Room::findOrFail($room);
-    return Inertia::render('rooms/join', [
+    return Inertia::render('rooms/[id]/join', [
         'room' => [
             'id' => $roomModel->id,
             'room_number' => $roomModel->room_number,
@@ -49,8 +85,10 @@ Route::get('/rooms/{room}/join', function ($room) {
             'seller_name' => $roomModel->users()->where('role', 'seller')->first()?->name,
         ],
         'role' => request()->get('role', 'buyer')
+            ,
+        'share_links' => app(\App\Services\RoomUrlService::class)->generateShareableLinks($roomModel->id)
     ]);
-})->name('rooms.join');
+})->name('rooms.join')->middleware('decrypt.room');
 
 Route::post('/rooms/{room}/join', function ($room) {
     $validated = request()->validate([
@@ -80,6 +118,15 @@ Route::post('/rooms/{room}/join', function ($room) {
 
     // Create room user
     $sessionToken = \Illuminate\Support\Str::random(32);
+
+    \Log::info('Creating room user', [
+        'room_id' => $roomModel->id,
+        'name' => $validated['name'],
+        'role' => $role,
+        'session_token' => substr($sessionToken, 0, 8) . '...',
+        'cookie_name' => 'room_session_' . $roomModel->id
+    ]);
+
     $roomUser = \App\Models\RoomUser::create([
         'room_id' => $roomModel->id,
         'name' => $validated['name'],
@@ -98,7 +145,7 @@ Route::post('/rooms/{room}/join', function ($room) {
     }
 
     // Log activity
-    \App\Models\RoomActivityLog::create([
+    $activityLog = \App\Models\RoomActivityLog::create([
         'room_id' => $roomModel->id,
         'action' => $role . '_joined',
         'user_name' => $validated['name'],
@@ -107,12 +154,18 @@ Route::post('/rooms/{room}/join', function ($room) {
         'timestamp' => now(),
     ]);
 
+    // Broadcast activity
+    broadcast(new \App\Events\RoomActivityLogged($activityLog))->toOthers();
+
     $cookie = cookie('room_session_' . $roomModel->id, $sessionToken, 120 * 60);
 
+    $roomUrlService = app(\App\Services\RoomUrlService::class);
+    $encryptedRoomId = $roomUrlService->encryptRoomId($roomModel->id);
+
     return redirect()
-        ->route('rooms.show', ['room' => $roomModel->id])
+        ->route('rooms.show', ['room' => $encryptedRoomId])
         ->cookie($cookie);
-})->name('rooms.join.post');
+})->name('rooms.join.post')->middleware('decrypt.room');
 
 Route::get('/rooms/{room}', function ($room) {
     $roomModel = \App\Models\Room::with(['users' => function($query) {
@@ -125,21 +178,45 @@ Route::get('/rooms/{room}', function ($room) {
     $sessionToken = request()->cookie('room_session_' . $room);
     $roomUser = null;
 
+    // Debug: Log session lookup
+    \Log::info('Room session check', [
+        'room_id' => $room,
+        'cookie_name' => 'room_session_' . $room,
+        'session_token' => $sessionToken ? 'exists' : 'missing',
+        'all_cookies' => array_keys(request()->cookie())
+    ]);
+
     if ($sessionToken) {
         $roomUser = \App\Models\RoomUser::where('room_id', $room)
                                      ->where('session_token', $sessionToken)
                                      ->first();
+
+        \Log::info('Room user lookup result', [
+            'room_id' => $room,
+            'found_user' => $roomUser ? 'yes' : 'no',
+            'user_details' => $roomUser ? [
+                'name' => $roomUser->name,
+                'role' => $roomUser->role,
+                'is_online' => $roomUser->is_online
+            ] : null
+        ]);
     }
 
     if (!$roomUser) {
-        return redirect()->route('rooms.join', ['room' => $room]);
+        \Log::info('No valid session found, redirecting to join', ['room_id' => $room]);
+        $roomUrlService = app(\App\Services\RoomUrlService::class);
+        $encryptedRoomId = request('encrypted_room_id') ?: $roomUrlService->encryptRoomId($room);
+        return redirect()->route('rooms.join', ['room' => $encryptedRoomId]);
     }
 
     // Get buyer and seller data
     $buyer = $roomModel->users()->where('role', 'buyer')->first();
     $seller = $roomModel->users()->where('role', 'seller')->first();
 
-    return Inertia::render('rooms/index', [
+    $roomUrlService = app(\App\Services\RoomUrlService::class);
+    $encryptedRoomId = request('encrypted_room_id') ?: $roomUrlService->encryptRoomId($roomModel->id);
+
+    return Inertia::render('rooms/[id]/index', [
         'room' => [
             'id' => $roomModel->id,
             'room_number' => $roomModel->room_number,
@@ -169,9 +246,11 @@ Route::get('/rooms/{room}', function ($room) {
             'role' => $roomUser->role,
             'name' => $roomUser->name,
             'is_online' => $roomUser->is_online,
-        ]
+        ],
+        'share_links' => $roomUrlService->generateShareableLinks($roomModel->id),
+        'encrypted_room_id' => $encryptedRoomId,
     ]);
-})->name('rooms.show');
+})->name('rooms.show')->middleware('decrypt.room');
 
 Route::post('/rooms/{room}/message', function ($room) {
     $validated = request()->validate([
@@ -202,6 +281,7 @@ Route::post('/rooms/{room}/message', function ($room) {
         'sender_name' => $roomUser->name,
         'message' => $validated['message'],
         'type' => $validated['type'],
+        'created_at' => now(),
     ]);
 
     // Log activity
@@ -214,11 +294,11 @@ Route::post('/rooms/{room}/message', function ($room) {
         'timestamp' => now(),
     ]);
 
-    // Broadcast message (will be implemented with Pusher)
-    // broadcast(new \App\Events\RoomMessageSent($message))->toOthers();
+    // Dispatch message event for broadcasting listeners (captured in tests)
+    \Illuminate\Support\Facades\Event::dispatch(new \App\Events\RoomMessageSent($message));
 
     return back();
-})->name('rooms.message.post');
+})->name('rooms.message.post')->middleware('decrypt.room');
 
 Route::post('/rooms/{room}/leave', function ($room) {
     // Validate room session
@@ -260,7 +340,7 @@ Route::post('/rooms/{room}/leave', function ($room) {
     $cookie = cookie('room_session_' . $room, '', -1, '/');
 
     return redirect('/rooms')->cookie($cookie);
-})->name('rooms.leave.post');
+})->name('rooms.leave.post')->middleware('decrypt.room');
 
 Route::post('/rooms/{room}/upload', function ($room) {
     $validated = request()->validate([
@@ -312,14 +392,15 @@ Route::post('/rooms/{room}/upload', function ($room) {
         'timestamp' => now(),
     ]);
 
-    // Broadcast file upload (will be implemented with Pusher)
-    // broadcast(new \App\Events\RoomMessageSent($message))->toOthers();
+    // Broadcast file upload
+    broadcast(new \App\Events\RoomMessageSent($message))->toOthers();
 
     return back()->with('success', $description . ' uploaded successfully');
-})->name('rooms.upload.post');
+})->name('rooms.upload.post')->middleware('decrypt.room');
 
 Route::get('/rooms/{room}/enter', function ($room) {
-    $roomModel = \App\Models\Room::findOrFail($room);
+    $roomUrlService = app(\App\Services\RoomUrlService::class);
+    $encryptedRoomId = request('encrypted_room_id') ?: $roomUrlService->encryptRoomId($room);
 
     // Check if user has session
     $sessionToken = request()->cookie('room_session_' . $room);
@@ -332,11 +413,28 @@ Route::get('/rooms/{room}/enter', function ($room) {
     }
 
     if (!$roomUser) {
-        return redirect()->route('rooms.join', ['room' => $room]);
+        return redirect()->route('rooms.join', ['room' => $encryptedRoomId]);
     }
 
-    return redirect()->route('rooms.show', ['room' => $room]);
-})->name('rooms.enter');
+    return redirect()->route('rooms.show', ['room' => $encryptedRoomId]);
+})->name('rooms.enter')->middleware('decrypt.room');
+
+// Direct token access without /join should redirect to the token join page
+Route::get('/rooms/{token}', function ($token) {
+    $roomUrlService = app(\App\Services\RoomUrlService::class);
+    $decrypted = $roomUrlService->decryptToken($token);
+
+    if (!$decrypted) {
+        return abort(404, 'Invalid or expired token');
+    }
+
+    $params = ['token' => $token];
+    if (!empty($decrypted['pin'])) {
+        $params['pin'] = $decrypted['pin'];
+    }
+
+    return redirect()->route('rooms.join.token', $params);
+})->where('token', $tokenPattern)->name('rooms.token.redirect');
 
 // Encrypted Token Routes
 Route::get('/rooms/{token}/join', function ($token) {
@@ -347,14 +445,58 @@ Route::get('/rooms/{token}/join', function ($token) {
         return abort(404, 'Invalid or expired token');
     }
 
+    if (!empty($decrypted['pin']) && request('pin') !== $decrypted['pin']) {
+        return abort(403, 'PIN required or invalid');
+    }
+
     $room = \App\Models\Room::findOrFail($decrypted['room_id']);
 
-    return Inertia::render('rooms/join', [
-        'room' => $room,
+    // Check if user already has a session for this room
+    $sessionToken = request()->cookie('room_session_' . $room->id);
+    $existingRoomUser = null;
+    $isCurrentUserRegistered = false;
+
+    if ($sessionToken) {
+        $existingRoomUser = \App\Models\RoomUser::where('room_id', $room->id)
+                                     ->where('session_token', $sessionToken)
+                                     ->first();
+
+        if ($existingRoomUser && $existingRoomUser->role === $decrypted['role']) {
+            // User is already registered for this role, redirect to room
+            $roomUrlService = app(\App\Services\RoomUrlService::class);
+            $encryptedRoomId = $roomUrlService->encryptRoomId($room->id);
+            return redirect()->route('rooms.show', ['room' => $encryptedRoomId]);
+        }
+    }
+
+    \Log::info('Token join check', [
+        'room_id' => $room->id,
         'role' => $decrypted['role'],
+        'session_exists' => $sessionToken ? 'yes' : 'no',
+        'existing_user' => $existingRoomUser ? [
+            'name' => $existingRoomUser->name,
+            'role' => $existingRoomUser->role,
+            'same_role' => $existingRoomUser->role === $decrypted['role']
+        ] : 'no'
+    ]);
+
+    return Inertia::render('rooms/[id]/join', [
+        'room' => [
+            'id' => $room->id,
+            'room_number' => $room->room_number,
+            'status' => $room->status,
+            'has_buyer' => $room->hasBuyer(),
+            'has_seller' => $room->hasSeller(),
+            'buyer_name' => $room->users()->where('role', 'buyer')->first()?->name,
+            'seller_name' => $room->users()->where('role', 'seller')->first()?->name,
+            'current_user_role' => $existingRoomUser?->role,
+            'current_user_name' => $existingRoomUser?->name,
+        ],
+        'role' => $decrypted['role'],
+        'share_links' => app(\App\Services\RoomUrlService::class)->generateShareableLinks($room->id),
         'token' => $token
     ]);
-})->name('rooms.join.token');
+})->where('token', $tokenPattern)->name('rooms.join.token');
 
 Route::get('/rooms/{token}/enter', function ($token) {
     $roomUrlService = app(\App\Services\RoomUrlService::class);
@@ -362,6 +504,10 @@ Route::get('/rooms/{token}/enter', function ($token) {
 
     if (!$decrypted) {
         return abort(404, 'Invalid or expired token');
+    }
+
+    if (!empty($decrypted['pin']) && request('pin') !== $decrypted['pin']) {
+        return abort(403, 'PIN required or invalid');
     }
 
     $roomModel = \App\Models\Room::findOrFail($decrypted['room_id']);
@@ -382,120 +528,401 @@ Route::get('/rooms/{token}/enter', function ($token) {
     }
 
     return redirect()->route('rooms.show', ['room' => $room]);
-})->name('rooms.enter.token');
+})->where('token', $tokenPattern)->name('rooms.enter.token');
 
-// GM Routes
-Route::prefix('gm')->group(function () {
-    Route::get('/login', function () {
-        return Inertia::render('gm/login');
-    })->name('gm.login');
 
-    Route::post('/login', function () {
-        $validated = request()->validate([
-            'email' => 'required|email',
-            'password' => 'required|string',
-        ]);
+// API Routes for Room Sharing
+Route::get('/api/rooms/{room}/share-links', function ($room) {
+    $roomModel = \App\Models\Room::findOrFail($room);
+    $roomUrlService = app(\App\Services\RoomUrlService::class);
 
-        // Find GM user
-        $gmUser = \App\Models\GmUser::where('email', $validated['email'])->first();
+    $shareLinks = [];
 
-        if (!$gmUser || !\Illuminate\Support\Facades\Hash::check($validated['password'], $gmUser->password)) {
-            return back()->withErrors([
-                'general' => 'Invalid credentials'
-            ])->withInput();
-        }
+    // Check what roles are needed
+    if ($roomModel->isAvailableForBuyer()) {
+        $shareLinks['buyer'] = [
+            'join_url' => $roomUrlService->generateJoinUrl($roomModel->id, 'buyer'),
+            'role' => 'buyer',
+            'label' => 'Buyer Link',
+            'description' => 'Share this link with someone who wants to buy'
+        ];
+    }
 
-        // Login GM user
-        \Illuminate\Support\Facades\Auth::guard('gm')->login($gmUser);
+    if ($roomModel->isAvailableForSeller()) {
+        $shareLinks['seller'] = [
+            'join_url' => $roomUrlService->generateJoinUrl($roomModel->id, 'seller'),
+            'role' => 'seller',
+            'label' => 'Seller Link',
+            'description' => 'Share this link with someone who wants to sell'
+        ];
+    }
 
-        return redirect()->intended(route('gm.dashboard'));
-    })->name('gm.login.post');
+    return response()->json([
+        'success' => true,
+        'room_id' => $roomModel->id,
+        'room_number' => $roomModel->room_number,
+        'status' => $roomModel->status,
+        'has_buyer' => $roomModel->hasBuyer(),
+        'has_seller' => $roomModel->hasSeller(),
+        'is_full' => $roomModel->isFull(),
+        'needs_buyer' => $roomModel->isAvailableForBuyer(),
+        'needs_seller' => $roomModel->isAvailableForSeller(),
+        'share_links' => $shareLinks,
+        'token_expiry_minutes' => \App\Services\RoomUrlService::TOKEN_EXPIRY_MINUTES
+    ]);
+})->name('rooms.share-links')->middleware('decrypt.room');
 
-    Route::middleware(['auth:gm'])->group(function () {
-        Route::get('/dashboard', function () {
-            $rooms = \App\Models\Room::with(['buyer', 'seller', 'messages' => function ($query) {
-                $query->latest()->limit(1);
-            }])->get()->map(function ($room) {
-                return [
-                    'id' => $room->id,
-                    'room_number' => $room->room_number,
-                    'status' => $room->status,
-                    'buyer' => $room->buyer->first() ? [
-                        'name' => $room->buyer->first()->name,
-                        'phone' => $room->buyer->first()->phone,
-                        'is_online' => $room->buyer->first()->is_online,
-                        'joined_at' => $room->buyer->first()->joined_at,
-                    ] : null,
-                    'seller' => $room->seller->first() ? [
-                        'name' => $room->seller->first()->name,
-                        'phone' => $room->seller->first()->phone,
-                        'is_online' => $room->seller->first()->is_online,
-                        'joined_at' => $room->seller->first()->joined_at,
-                    ] : null,
-                    'last_message' => $room->messages->first(),
-                    'activity_count' => $room->activityLogs()->count(),
-                ];
-            });
+// API Route for Room Status (WebSocket fallback)
+Route::get('/api/rooms/status', function () {
+    // Return room status updates for WebSocket fallback polling
+    // This would typically get recent status changes from a cache or database
+    $rooms = \App\Models\Room::with(['users' => function($query) {
+        $query->select('id', 'room_id', 'name', 'role', 'is_online');
+    }])
+    ->orderBy('room_number')
+    ->get()
+    ->map(function ($room) {
+        $firstUser = $room->users()->first();
+        return [
+            'room_id' => $room->id,
+            'status' => $room->status,
+            'has_buyer' => $room->hasBuyer(),
+            'has_seller' => $room->hasSeller(),
+            'available_for_buyer' => $room->isAvailableForBuyer(),
+            'available_for_seller' => $room->isAvailableForSeller(),
+            'user_name' => $firstUser?->name ?? '',
+            'role' => $firstUser?->role ?? '',
+            'action' => 'room_updated',
+            'timestamp' => now()->toISOString()
+        ];
+    });
 
-            $stats = [
+    return response()->json($rooms);
+})->name('rooms.status');
+
+// Dashboard routes for GM (authenticated users)
+Route::middleware(['auth:gm'])->group(function () {
+    Route::get('/gm/rooms', function () {
+        $rooms = \App\Models\Room::with(['users' => function($query) {
+            $query->select('id', 'room_id', 'name', 'role', 'is_online', 'joined_at', 'last_seen');
+        }, 'messages' => function ($query) {
+            $query->latest()->limit(1);
+        }, 'activityLogs' => function ($query) {
+            $query->latest()->limit(5);
+        }])
+        ->orderBy('room_number')
+        ->get()
+        ->map(function ($room) {
+            $participants = [];
+            if ($room->hasBuyer()) {
+                $participants[] = 'Buyer';
+            }
+            if ($room->hasSeller()) {
+                $participants[] = 'Seller';
+            }
+
+            return [
+                'id' => $room->id,
+                'room_number' => $room->room_number,
+                'status' => $room->status,
+                'created_at' => $room->created_at,
+                'updated_at' => $room->updated_at,
+                'has_buyer' => $room->hasBuyer(),
+                'has_seller' => $room->hasSeller(),
+                'is_available_for_buyer' => $room->isAvailableForBuyer(),
+                'is_available_for_seller' => $room->isAvailableForSeller(),
+                'participants' => $participants,
+                'users' => $room->users->map(function ($user) {
+                    return [
+                        'id' => $user->id,
+                        'name' => $user->name,
+                        'role' => $user->role,
+                        'is_online' => $user->is_online,
+                        'joined_at' => $user->joined_at,
+                        'last_seen' => $user->last_seen,
+                    ];
+                }),
+                'message_count' => $room->messages()->count(),
+                'last_message' => $room->messages->first(),
+                'activity_count' => $room->activityLogs()->count(),
+                'last_activity' => $room->activityLogs->first(),
+            ];
+        });
+
+        return Inertia::render('gm/room-management', [
+            'rooms' => $rooms,
+            'stats' => [
                 'total_rooms' => \App\Models\Room::count(),
                 'free_rooms' => \App\Models\Room::where('status', 'free')->count(),
                 'in_use_rooms' => \App\Models\Room::where('status', 'in_use')->count(),
                 'active_users' => \App\Models\RoomUser::where('is_online', true)->count(),
+            ]
+        ]);
+    })->name('gm.rooms');
+
+    Route::get('dashboard', function () {
+        $rooms = \App\Models\Room::with(['buyer', 'seller', 'messages' => function ($query) {
+            $query->latest()->limit(1);
+        }])->get()->map(function ($room) {
+            return [
+                'id' => $room->id,
+                'room_number' => $room->room_number,
+                'status' => $room->status,
+                'buyer' => $room->buyer->first() ? [
+                    'name' => $room->buyer->first()->name,
+                    'phone' => $room->buyer->first()->phone,
+                    'is_online' => $room->buyer->first()->is_online,
+                    'joined_at' => $room->buyer->first()->joined_at,
+                ] : null,
+                'seller' => $room->seller->first() ? [
+                    'name' => $room->seller->first()->name,
+                    'phone' => $room->seller->first()->phone,
+                    'is_online' => $room->seller->first()->is_online,
+                    'joined_at' => $room->seller->first()->joined_at,
+                ] : null,
+                'last_message' => $room->messages->first(),
+                'activity_count' => $room->activityLogs()->count(),
             ];
+        });
 
-            return Inertia::render('gm/dashboard', [
-                'rooms' => $rooms,
-                'stats' => $stats,
-            ]);
-        })->name('gm.dashboard');
+        // Get transaction statistics
+        $transactionStats = [
+            'total_transactions' => \App\Models\Transaction::count(),
+            'pending_payment' => \App\Models\Transaction::where('status', 'pending_payment')->count(),
+            'active_transactions' => \App\Models\Transaction::active()->count(),
+            'completed_transactions' => \App\Models\Transaction::completed()->count(),
+            'disputed_transactions' => \App\Models\Transaction::disputed()->count(),
+            'total_volume' => \App\Models\Transaction::sum('amount'),
+            'total_commission' => \App\Models\Transaction::sum('commission'),
+            'pending_payment_amount' => \App\Models\Transaction::where('status', 'pending_payment')->sum('amount'),
+        ];
 
-        Route::get('/room/{room}', function ($room) {
-            $roomModel = \App\Models\Room::with(['buyer', 'seller', 'messages' => function ($query) {
-                $query->ordered()->limit(100);
-            }, 'activityLogs' => function ($query) {
-                $query->recent(50);
-            }])->findOrFail($room);
+        // Get recent transactions
+        $recentTransactions = \App\Models\Transaction::with(['room', 'buyer', 'seller'])
+            ->latest()
+            ->limit(10)
+            ->get()
+            ->map(function ($transaction) {
+                return [
+                    'id' => $transaction->id,
+                    'transaction_number' => $transaction->transaction_number,
+                    'amount' => $transaction->amount,
+                    'currency' => $transaction->currency,
+                    'status' => $transaction->status,
+                    'status_label' => $transaction->getStatusLabel(),
+                    'room_number' => $transaction->room->room_number,
+                    'buyer_name' => $transaction->buyer?->name,
+                    'seller_name' => $transaction->seller?->name,
+                    'created_at' => $transaction->created_at->format('Y-m-d H:i:s'),
+                ];
+            });
 
-            return Inertia::render('gm/room-details', [
-                'room' => [
-                    'id' => $roomModel->id,
-                    'room_number' => $roomModel->room_number,
-                    'status' => $roomModel->status,
-                    'buyer' => $roomModel->buyer->first(),
-                    'seller' => $roomModel->seller->first(),
-                    'messages' => $roomModel->messages->map(function ($message) {
-                        return [
-                            'id' => $message->id,
-                            'sender_role' => $message->sender_role,
-                            'sender_name' => $message->sender_name,
-                            'message' => $message->message,
-                            'type' => $message->type,
-                            'created_at' => $message->created_at,
-                        ];
-                    }),
-                    'activity_logs' => $roomModel->activityLogs->map(function ($log) {
-                        return [
-                            'id' => $log->id,
-                            'action' => $log->action,
-                            'user_name' => $log->user_name,
-                            'role' => $log->role,
-                            'description' => $log->description,
-                            'timestamp' => $log->timestamp,
-                        ];
-                    }),
-                ],
-            ]);
-        })->name('gm.room.details');
+        $stats = [
+            'total_rooms' => \App\Models\Room::count(),
+            'free_rooms' => \App\Models\Room::where('status', 'free')->count(),
+            'in_use_rooms' => \App\Models\Room::where('status', 'in_use')->count(),
+            'active_users' => \App\Models\RoomUser::where('is_online', true)->count(),
+        ];
+
+        return Inertia::render('dashboard', [
+            'rooms' => $rooms,
+            'stats' => $stats,
+            'transactionStats' => $transactionStats,
+            'recentTransactions' => $recentTransactions,
+        ]);
+    })->name('dashboard');
+
+    Route::get('/room/{room}', function ($room) {
+        $roomModel = \App\Models\Room::with(['buyer', 'seller', 'messages' => function ($query) {
+            $query->ordered()->limit(100);
+        }, 'activityLogs' => function ($query) {
+            $query->recent(50);
+        }])->findOrFail($room);
+
+        return Inertia::render('gm/room-details', [
+            'room' => [
+                'id' => $roomModel->id,
+                'room_number' => $roomModel->room_number,
+                'status' => $roomModel->status,
+                'buyer' => $roomModel->buyer->first(),
+                'seller' => $roomModel->seller->first(),
+                'messages' => $roomModel->messages->map(function ($message) {
+                    return [
+                        'id' => $message->id,
+                        'sender_role' => $message->sender_role,
+                        'sender_name' => $message->sender_name,
+                        'message' => $message->message,
+                        'type' => $message->type,
+                        'created_at' => $message->created_at,
+                    ];
+                }),
+                'activity_logs' => $roomModel->activityLogs->map(function ($log) {
+                    return [
+                        'id' => $log->id,
+                        'action' => $log->action,
+                        'user_name' => $log->user_name,
+                        'role' => $log->role,
+                        'description' => $log->description,
+                        'timestamp' => $log->timestamp,
+                    ];
+                }),
+            ],
+        ]);
+    })->name('gm.room.details');
+
+    // User Verification Management Routes
+    Route::prefix('api/verifications')->group(function () {
+        Route::get('/', [App\Http\Controllers\UserVerificationController::class, 'index']);
+        Route::get('/stats', [App\Http\Controllers\UserVerificationController::class, 'stats']);
+        Route::post('/{verification}/approve', [App\Http\Controllers\UserVerificationController::class, 'approve']);
+        Route::post('/{verification}/reject', [App\Http\Controllers\UserVerificationController::class, 'reject']);
     });
+
+    // User Verification Page
+    Route::get('/verifications', function () {
+        return Inertia::render('verifications/index');
+    })->name('verifications.index');
 });
 
+// WebSocket API Routes
+Route::prefix('api/websocket')->group(function () {
+    Route::get('/rooms/{roomId}/messages', [\App\Http\Controllers\WebSocketController::class, 'getRoomMessages']);
+    Route::get('/rooms/{roomId}/connections', [\App\Http\Controllers\WebSocketController::class, 'getRoomConnections']);
+    Route::post('/rooms/{roomId}/messages', [\App\Http\Controllers\WebSocketController::class, 'sendMessage']);
+    Route::post('/rooms/{roomId}/typing', [\App\Http\Controllers\WebSocketController::class, 'sendTyping']);
+    Route::post('/rooms/{roomId}/activity', [\App\Http\Controllers\WebSocketController::class, 'sendActivity']);
+    Route::delete('/rooms/{roomId}/session', [\App\Http\Controllers\WebSocketController::class, 'clearSessionData']);
+    Route::get('/metrics', [\App\Http\Controllers\WebSocketController::class, 'getMetrics']);
+    Route::get('/health', [\App\Http\Controllers\WebSocketController::class, 'getHealth']);
+    Route::get('/connections', [\App\Http\Controllers\WebSocketController::class, 'getAllConnections']);
+    Route::post('/cleanup', [\App\Http\Controllers\WebSocketController::class, 'cleanupConnections']);
+    Route::post('/test', [\App\Http\Controllers\WebSocketController::class, 'testConnection']);
+    Route::post('/load-test', [\App\Http\Controllers\WebSocketController::class, 'loadTest']);
+});
 
-// Legacy auth routes (keep for Fortify compatibility)
-Route::middleware(['auth', 'verified'])->group(function () {
-    Route::get('dashboard', function () {
-        return Inertia::render('dashboard');
-    })->name('dashboard');
+// API routes for token-based room access and share links
+Route::post('/api/room/generate-share-links', function () {
+    $validated = request()->validate([
+        'room_id' => 'required|integer|exists:rooms,id',
+        'pin' => ['nullable', 'string', 'regex:/^[A-Za-z0-9]{4,8}$/'],
+    ]);
+
+    $room = \App\Models\Room::findOrFail($validated['room_id']);
+    $roomUrlService = app(\App\Services\RoomUrlService::class);
+    $pin = $validated['pin'] ?? null;
+
+    return response()->json([
+        'success' => true,
+        'message' => 'Shareable links generated successfully',
+        'data' => [
+            'room' => [
+                'id' => $room->id,
+                'room_number' => $room->room_number ?? null,
+                'status' => $room->status,
+            ],
+            'pin_enabled' => !empty($pin),
+            'pin' => $pin,
+            'links' => $roomUrlService->generateShareableLinks($room->id, $pin),
+        ],
+    ]);
+});
+
+Route::prefix('api/room')->middleware(['room.token'])->group(function () {
+    Route::post('/{token}/join-with-token', [App\Http\Controllers\Api\RoomJoinController::class, 'joinWithToken']);
+    Route::post('/{token}/enter-with-token', [App\Http\Controllers\Api\RoomJoinController::class, 'enterWithToken']);
+});
+
+// Public route for users to submit verification requests
+Route::middleware(['auth'])->group(function () {
+    Route::post('/api/verifications', [App\Http\Controllers\UserVerificationController::class, 'store']);
+});
+
+// Invitation Routes
+Route::pattern('token', 'inv_[A-Za-z0-9_-]+');
+
+Route::prefix('rooms/invite')->group(function () {
+    // Public invitation access
+    Route::get('/{token}', [App\Http\Controllers\InvitationController::class, 'showInvitation'])
+        ->name('rooms.invite.join')
+        ->middleware(['throttle:10,1']);
+
+    Route::post('/{token}', [App\Http\Controllers\InvitationController::class, 'joinRoom'])
+        ->name('rooms.invite.join.post')
+        ->middleware(['throttle:5,1']);
+
+    Route::post('/{token}/verify-pin', [App\Http\Controllers\InvitationController::class, 'verifyPin'])
+        ->name('rooms.invite.verify-pin')
+        ->middleware(['throttle:20,1']);
+
+    Route::get('/{token}/expired', function ($token) {
+        return inertia('rooms/invitation-expired', ['token' => $token]);
+    })->name('rooms.invite.expired');
+});
+
+// Room Invitations Management (authenticated users only)
+Route::middleware(['auth'])->prefix('rooms/{room}')->group(function () {
+    Route::get('/invitations', function ($room) {
+        $roomModel = \App\Models\Room::findOrFail($room);
+        $invitations = $roomModel->invitations()
+            ->with(['inviter', 'invitee'])
+            ->orderBy('created_at', 'desc')
+            ->get()
+            ->map(function ($invitation) {
+                return [
+                    'id' => $invitation->id,
+                    'email' => $invitation->email,
+                    'role' => $invitation->role,
+                    'status' => $invitation->isAccepted() ? 'accepted' : ($invitation->isExpired() ? 'expired' : 'pending'),
+                    'expires_at' => $invitation->expires_at->toISOString(),
+                    'accepted_at' => $invitation->accepted_at?->toISOString(),
+                    'joined_at' => $invitation->joined_at?->toISOString(),
+                    'pin_attempts' => $invitation->pin_attempts,
+                    'is_pin_locked' => $invitation->isPinLocked(),
+                    'inviter' => $invitation->inviter->name,
+                    'invitee' => $invitation->invitee?->name
+                ];
+            });
+
+        $availableRoles = [];
+        if (!$roomModel->hasBuyer()) {
+            $availableRoles[] = 'buyer';
+        }
+        if (!$roomModel->hasSeller()) {
+            $availableRoles[] = 'seller';
+        }
+
+        return inertia('rooms/invitations', [
+            'room' => [
+                'id' => $roomModel->id,
+                'name' => "Room #{$roomModel->room_number}",
+                'room_number' => $roomModel->room_number,
+                'status' => $roomModel->status
+            ],
+            'invitations' => $invitations,
+            'availableRoles' => $availableRoles
+        ]);
+    })->name('rooms.invitations');
+});
+
+// API Routes for invitation management (authenticated users only)
+Route::middleware(['auth'])->prefix('api/rooms/{room}/invitations')->group(function () {
+    Route::post('/', [App\Http\Controllers\InvitationController::class, 'create'])
+        ->name('rooms.invitations.create')
+        ->middleware('throttle:5,1');
+
+    Route::get('/', [App\Http\Controllers\InvitationController::class, 'index'])
+        ->name('rooms.invitations.index');
+
+    Route::post('/{invitation}/revoke', [App\Http\Controllers\InvitationController::class, 'revoke'])
+        ->name('rooms.invitations.revoke');
+
+    Route::delete('/{invitation}', [App\Http\Controllers\InvitationController::class, 'destroy'])
+        ->name('rooms.invitations.destroy');
 });
 
 require __DIR__.'/settings.php';
+
+// SSE streaming route for room messages
+Route::get('/api/rooms/{room}/sse', [\App\Http\Controllers\SseController::class, 'streamRoom'])
+    ->middleware(['throttle:60,1', 'decrypt.room'])
+    ->name('rooms.sse');

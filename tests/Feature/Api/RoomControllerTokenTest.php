@@ -6,6 +6,7 @@ use App\Models\Room;
 use App\Services\RoomUrlService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Foundation\Testing\WithFaker;
+use Illuminate\Support\Str;
 use Tests\TestCase;
 
 class RoomControllerTokenTest extends TestCase
@@ -291,7 +292,7 @@ class RoomControllerTokenTest extends TestCase
             'name' => 'Existing Buyer',
             'phone' => '1111111111',
             'role' => 'buyer',
-            'session_token' => str_random(32)
+            'session_token' => Str::random(32)
         ]);
 
         $token = $this->roomUrlService->generateToken($room->id, 'buyer');

@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { router } from '@inertiajs/react'
 import {
   Dialog,
   DialogContent,
@@ -24,15 +25,24 @@ import { useAuth } from '@/contexts/AuthContext'
 interface JoinRoomModalProps {
   roomId: number
   roomStatus: 'free' | 'in_use'
+  roomNumber?: string
+  shareLinks?: {
+    buyer: { join: string; enter: string }
+    seller: { join: string; enter: string }
+    pin?: string | null
+    pin_enabled?: boolean
+  }
   onClose: () => void
-  onSubmit: (userData: any) => void
+  isOpen: boolean
 }
 
 export default function JoinRoomModal({
   roomId,
   roomStatus,
+  roomNumber,
+  shareLinks,
   onClose,
-  onSubmit
+  isOpen
 }: JoinRoomModalProps) {
   const { login } = useAuth()
   const [formData, setFormData] = useState({
@@ -66,6 +76,17 @@ export default function JoinRoomModal({
     return Object.keys(newErrors).length === 0
   }
 
+  const getTokenFromLink = (link?: string) => {
+    if (!link) return ''
+    try {
+      const url = new URL(link)
+      const parts = url.pathname.split('/')
+      return parts[2] ?? ''
+    } catch (e) {
+      return ''
+    }
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
@@ -74,29 +95,66 @@ export default function JoinRoomModal({
     }
 
     setIsSubmitting(true)
+    setErrors({})
 
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1000))
+      const selectedRole = formData.role || 'buyer'
+      const joinLink = shareLinks?.[selectedRole]?.join
+      const token = getTokenFromLink(joinLink)
+
+      if (!token) {
+        setErrors({ submit: 'Invalid room token. Please try again.' })
+        return
+      }
+
+      const response = await fetch(`/api/room/${token}/join-with-token`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': (document.querySelector('meta[name="csrf-token"]') as HTMLMetaElement)?.content || '',
+        },
+        body: JSON.stringify({
+          name: formData.name.trim(),
+          phone: formData.phone.trim(),
+          pin: shareLinks?.pin ?? null,
+        })
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        const errorMessage = errorData?.message || errorData?.error || 'Failed to join room'
+        setErrors({ submit: errorMessage })
+        return
+      }
+
+      const result = await response.json()
+      const sessionToken = result?.data?.session_token
+
+      if (sessionToken) {
+        document.cookie = `room_session_${roomId}=${sessionToken};path=/;max-age=${60 * 120}`
+      }
 
       const userData = {
         name: formData.name.trim(),
         phone: formData.phone.trim(),
-        role: formData.role || 'buyer',
+        role: selectedRole,
         roomId,
-        sessionToken: `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+        sessionToken
       }
 
-      // Log the user in
       login(userData)
 
-      // Submit the form
-      onSubmit(userData)
-
+      // Reset form and redirect to room
+      setFormData({ name: '', phone: '', role: roomStatus === 'free' ? 'buyer' : '' })
       onClose()
+
+      // Navigate to room page
+      const enterUrl = shareLinks?.[selectedRole]?.enter
+      router.visit(enterUrl || `/rooms/${roomId}`)
+
     } catch (error) {
       console.error('Error joining room:', error)
-      setErrors({ submit: 'Failed to join room. Please try again.' })
+      setErrors({ submit: 'Network error. Please check your connection and try again.' })
     } finally {
       setIsSubmitting(false)
     }
@@ -133,7 +191,7 @@ export default function JoinRoomModal({
   const roleInfo = getRoleInfo()
 
   return (
-    <Dialog open={true} onOpenChange={onClose}>
+    <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center">
@@ -141,7 +199,7 @@ export default function JoinRoomModal({
             {roleInfo.title}
           </DialogTitle>
           <DialogDescription>
-            Room #{roomId} • {roleInfo.description}
+            Room #{roomNumber || roomId} • {roleInfo.description}
           </DialogDescription>
         </DialogHeader>
 
@@ -239,6 +297,31 @@ export default function JoinRoomModal({
                   {errors.role}
                 </p>
               )}
+            </div>
+          )}
+
+          {/* PIN Input (if PIN is enabled) */}
+          {shareLinks?.pin_enabled && (
+            <div className="space-y-2">
+              <Label htmlFor="pin">Security PIN</Label>
+              <div className="relative">
+                <Shield className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <Input
+                  id="pin"
+                  type="password"
+                  placeholder="Enter security PIN"
+                  value={shareLinks.pin || ''}
+                  onChange={(e) => {
+                    // Note: PIN is typically read-only from shareLinks
+                    // This field is informational in most cases
+                  }}
+                  className="pl-10"
+                  disabled={isSubmitting || !shareLinks.pin}
+                />
+              </div>
+              <p className="text-xs text-gray-500">
+                This room requires a PIN for access. The PIN has been pre-filled.
+              </p>
             </div>
           )}
 

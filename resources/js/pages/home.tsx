@@ -1,6 +1,7 @@
 import MarketingLayout from '@/layouts/marketing-layout';
 import { Link } from '@inertiajs/react';
 import { cn } from '@/lib/utils';
+import { getRoomUrl } from '@/lib/roomUrlUtils';
 import {
     ArrowRight,
     Check,
@@ -162,7 +163,7 @@ export default function HomePage() {
                                             Last activity: {room.last}
                                         </p>
                                         <Link
-                                            href={`/rooms/${room.id}`}
+                                            href={getRoomUrl(room)}
                                             className="mt-4 inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5"
                                         >
                                             Enter room
