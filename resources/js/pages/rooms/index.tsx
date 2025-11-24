@@ -14,7 +14,7 @@ import {
 import RoomsNavbar from '@/components/RoomsNavbar';
 import ShareRoomModal from '@/components/ShareRoomModal';
 import JoinRoomModal from '@/components/JoinRoomModal';
-import { useRealtimeRooms } from '@/hooks/useRealtimeRooms';
+// import { useRealtimeRooms } from '@/hooks/useRealtimeRooms'; // Temporarily disabled after cleanup
 import { cn } from '@/lib/utils';
 import { getRoomUrl, getJoinUrl } from '@/lib/roomUrlUtils';
 
@@ -60,7 +60,12 @@ export default function RoomsIndex({ rooms }: RoomsPageProps) {
     const [joinModalOpen, setJoinModalOpen] = useState(false);
     const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
 
-    const { rooms: realtimeRooms, isConnected, connectionError, isRoomAvailableForSharing } = useRealtimeRooms(rooms);
+    // Temporarily disabled after cleanup
+    // const { rooms: realtimeRooms, isConnected, connectionError, isRoomAvailableForSharing } = useRealtimeRooms(rooms);
+    const realtimeRooms = rooms;
+    const isConnected = false;
+    const connectionError = null;
+    const isRoomAvailableForSharing = (room: Room) => room.status === 'free';
 
     const filtered = useMemo(
         () =>

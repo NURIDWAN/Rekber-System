@@ -34,6 +34,19 @@ class Transaction extends Model
         'cancelled_at',
         'gm_user_id',
         'metadata',
+        // New fields for MVP
+        'payment_verified_by',
+        'payment_verified_at',
+        'payment_rejection_reason',
+        'shipping_verified_by',
+        'shipping_verified_at',
+        'shipping_rejection_reason',
+        'funds_released_by',
+        'funds_released_at',
+        'payment_proof_uploaded_at',
+        'payment_proof_uploaded_by',
+        'shipping_receipt_uploaded_at',
+        'shipping_receipt_uploaded_by',
     ];
 
     protected $casts = [
@@ -47,6 +60,12 @@ class Transaction extends Model
         'completed_at' => 'datetime',
         'cancelled_at' => 'datetime',
         'metadata' => 'array',
+        // New casts for MVP
+        'payment_verified_at' => 'datetime',
+        'shipping_verified_at' => 'datetime',
+        'funds_released_at' => 'datetime',
+        'payment_proof_uploaded_at' => 'datetime',
+        'shipping_receipt_uploaded_at' => 'datetime',
     ];
 
     /**
@@ -96,6 +115,54 @@ class Transaction extends Model
     public function gmUser(): BelongsTo
     {
         return $this->belongsTo(GmUser::class);
+    }
+
+    /**
+     * Get the files associated with this transaction.
+     */
+    public function files()
+    {
+        return $this->hasMany(TransactionFile::class);
+    }
+
+    /**
+     * Get the payment proof files for this transaction.
+     */
+    public function paymentProofFiles()
+    {
+        return $this->hasMany(TransactionFile::class)->where('file_type', 'payment_proof');
+    }
+
+    /**
+     * Get the shipping receipt files for this transaction.
+     */
+    public function shippingReceiptFiles()
+    {
+        return $this->hasMany(TransactionFile::class)->where('file_type', 'shipping_receipt');
+    }
+
+    /**
+     * Get the GM user who verified payment.
+     */
+    public function paymentVerifier(): BelongsTo
+    {
+        return $this->belongsTo(GmUser::class, 'payment_verified_by');
+    }
+
+    /**
+     * Get the GM user who verified shipping.
+     */
+    public function shippingVerifier(): BelongsTo
+    {
+        return $this->belongsTo(GmUser::class, 'shipping_verified_by');
+    }
+
+    /**
+     * Get the GM user who released funds.
+     */
+    public function fundsReleaser(): BelongsTo
+    {
+        return $this->belongsTo(GmUser::class, 'funds_released_by');
     }
 
     /**
@@ -169,9 +236,11 @@ class Transaction extends Model
     {
         $labels = [
             'pending_payment' => ['text' => 'Pending Payment', 'color' => 'yellow'],
+            'awaiting_payment_verification' => ['text' => 'Awaiting Payment Verification', 'color' => 'orange'],
             'paid' => ['text' => 'Paid', 'color' => 'blue'],
-            'shipped' => ['text' => 'Shipped', 'color' => 'purple'],
-            'delivered' => ['text' => 'Delivered', 'color' => 'indigo'],
+            'awaiting_shipping_verification' => ['text' => 'Awaiting Shipping Verification', 'color' => 'purple'],
+            'shipped' => ['text' => 'Shipped', 'color' => 'indigo'],
+            'delivered' => ['text' => 'Delivered', 'color' => 'cyan'],
             'completed' => ['text' => 'Completed', 'color' => 'green'],
             'disputed' => ['text' => 'Disputed', 'color' => 'red'],
             'cancelled' => ['text' => 'Cancelled', 'color' => 'gray'],
@@ -179,5 +248,256 @@ class Transaction extends Model
         ];
 
         return $labels[$this->status] ?? ['text' => 'Unknown', 'color' => 'gray'];
+    }
+
+    // MVP ESCROW METHODS
+
+    /**
+     * Check if payment proof has been uploaded
+     */
+    public function hasPaymentProof(): bool
+    {
+        return $this->payment_proof_uploaded_at !== null;
+    }
+
+    /**
+     * Check if shipping receipt has been uploaded
+     */
+    public function hasShippingReceipt(): bool
+    {
+        return $this->shipping_receipt_uploaded_at !== null;
+    }
+
+    /**
+     * Check if payment is verified
+     */
+    public function isPaymentVerified(): bool
+    {
+        return $this->payment_verified_at !== null;
+    }
+
+    /**
+     * Check if shipping is verified
+     */
+    public function isShippingVerified(): bool
+    {
+        return $this->shipping_verified_at !== null;
+    }
+
+    /**
+     * Check if funds have been released
+     */
+    public function areFundsReleased(): bool
+    {
+        return $this->funds_released_at !== null;
+    }
+
+    /**
+     * Check if transaction is awaiting payment verification
+     */
+    public function isAwaitingPaymentVerification(): bool
+    {
+        return $this->status === 'awaiting_payment_verification';
+    }
+
+    /**
+     * Check if transaction is awaiting shipping verification
+     */
+    public function isAwaitingShippingVerification(): bool
+    {
+        return $this->status === 'awaiting_shipping_verification';
+    }
+
+    /**
+     * Verify payment proof
+     */
+    public function verifyPayment(int $gmUserId): bool
+    {
+        if ($this->status !== 'awaiting_payment_verification') {
+            return false;
+        }
+
+        return $this->update([
+            'status' => 'paid',
+            'payment_verified_by' => $gmUserId,
+            'payment_verified_at' => now(),
+            'payment_rejection_reason' => null,
+            'paid_at' => now(),
+        ]);
+    }
+
+    /**
+     * Reject payment proof
+     */
+    public function rejectPayment(int $gmUserId, string $reason): bool
+    {
+        if ($this->status !== 'awaiting_payment_verification') {
+            return false;
+        }
+
+        return $this->update([
+            'status' => 'pending_payment',
+            'payment_verified_by' => null,
+            'payment_verified_at' => null,
+            'payment_rejection_reason' => $reason,
+        ]);
+    }
+
+    /**
+     * Verify shipping receipt
+     */
+    public function verifyShipping(int $gmUserId): bool
+    {
+        if ($this->status !== 'awaiting_shipping_verification') {
+            return false;
+        }
+
+        return $this->update([
+            'status' => 'shipped',
+            'shipping_verified_by' => $gmUserId,
+            'shipping_verified_at' => now(),
+            'shipping_rejection_reason' => null,
+            'shipped_at' => now(),
+        ]);
+    }
+
+    /**
+     * Reject shipping receipt
+     */
+    public function rejectShipping(int $gmUserId, string $reason): bool
+    {
+        if ($this->status !== 'awaiting_shipping_verification') {
+            return false;
+        }
+
+        return $this->update([
+            'status' => 'paid',
+            'shipping_verified_by' => null,
+            'shipping_verified_at' => null,
+            'shipping_rejection_reason' => $reason,
+        ]);
+    }
+
+    /**
+     * Release funds and complete transaction
+     */
+    public function releaseFunds(int $gmUserId): bool
+    {
+        if ($this->status !== 'delivered') {
+            return false;
+        }
+
+        $success = $this->update([
+            'status' => 'completed',
+            'funds_released_by' => $gmUserId,
+            'funds_released_at' => now(),
+            'completed_at' => now(),
+        ]);
+
+        if ($success) {
+            // Reset room to free status
+            $this->room->update(['status' => 'free']);
+        }
+
+        return $success;
+    }
+
+    /**
+     * Mark as delivered (by buyer)
+     */
+    public function markAsDelivered(): bool
+    {
+        if ($this->status !== 'shipped') {
+            return false;
+        }
+
+        return $this->update([
+            'status' => 'delivered',
+            'delivered_at' => now(),
+        ]);
+    }
+
+    /**
+     * Get current action required for transaction
+     */
+    public function getCurrentAction(): ?array
+    {
+        return match ($this->status) {
+            'pending_payment' => [
+                'text' => 'Upload Payment Proof',
+                'required_by' => 'buyer',
+                'next_status' => 'awaiting_payment_verification',
+            ],
+            'awaiting_payment_verification' => [
+                'text' => 'Verify Payment Proof',
+                'required_by' => 'gm',
+                'next_status' => 'paid',
+            ],
+            'paid' => [
+                'text' => 'Upload Shipping Receipt',
+                'required_by' => 'seller',
+                'next_status' => 'awaiting_shipping_verification',
+            ],
+            'awaiting_shipping_verification' => [
+                'text' => 'Verify Shipping Receipt',
+                'required_by' => 'gm',
+                'next_status' => 'shipped',
+            ],
+            'shipped' => [
+                'text' => 'Confirm Receipt',
+                'required_by' => 'buyer',
+                'next_status' => 'delivered',
+            ],
+            'delivered' => [
+                'text' => 'Release Funds',
+                'required_by' => 'gm',
+                'next_status' => 'completed',
+            ],
+            'completed' => null,
+            default => null,
+        };
+    }
+
+    /**
+     * Check if transaction can be edited by user role
+     */
+    public function canBeEditedBy(string $role, ?int $userId = null): bool
+    {
+        return match ($this->status) {
+            'pending_payment', 'awaiting_payment_verification' => $role === 'buyer',
+            'paid', 'awaiting_shipping_verification' => $role === 'seller',
+            'shipped' => $role === 'buyer',
+            default => false,
+        };
+    }
+
+    /**
+     * Get progress percentage
+     */
+    public function getProgressPercentage(): int
+    {
+        $steps = [
+            'pending_payment' => 0,
+            'awaiting_payment_verification' => 25,
+            'paid' => 50,
+            'awaiting_shipping_verification' => 75,
+            'shipped' => 80,
+            'delivered' => 90,
+            'completed' => 100,
+        ];
+
+        return $steps[$this->status] ?? 0;
+    }
+
+    /**
+     * Scope to get transactions requiring GM attention
+     */
+    public function scopeRequiringGMAttention($query)
+    {
+        return $query->whereIn('status', [
+            'awaiting_payment_verification',
+            'awaiting_shipping_verification',
+            'delivered'
+        ]);
     }
 }

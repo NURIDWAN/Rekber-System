@@ -1,7 +1,9 @@
 import React, { createContext, useContext, useReducer, useEffect, ReactNode } from 'react'
 import { RoomState, Room, RoomMessage, RoomActivityLog, RoomUser } from '../types'
-import { echo, joinRoomChannel, joinPresenceChannel, UserPresenceEvent } from '../lib/pusher'
 import { useAuth } from './AuthContext'
+
+// Import Pusher for real-time functionality
+import Pusher from 'pusher-js'
 
 interface RoomContextType {
   selectedRoom: RoomState | null
@@ -15,6 +17,7 @@ interface RoomContextType {
   updateUserOnlineStatus: (userId: number, isOnline: boolean) => void
   setLoading: (loading: boolean) => void
   setError: (error: string | null) => void
+  updateTransactionStatus: (status: string) => void
 }
 
 const RoomContext = createContext<RoomContextType | undefined>(undefined)
@@ -35,6 +38,7 @@ type RoomAction =
   | { type: 'UPDATE_USER_ONLINE_STATUS'; payload: { userId: number; isOnline: boolean } }
   | { type: 'SET_LOADING'; payload: boolean }
   | { type: 'SET_ERROR'; payload: string | null }
+  | { type: 'UPDATE_TRANSACTION_STATUS'; payload: string }
 
 function roomReducer(state: RoomStateData, action: RoomAction): RoomStateData {
   switch (action.type) {
@@ -113,6 +117,16 @@ function roomReducer(state: RoomStateData, action: RoomAction): RoomStateData {
     case 'SET_ERROR':
       return { ...state, error: action.payload }
 
+    case 'UPDATE_TRANSACTION_STATUS':
+      if (!state.selectedRoom) return state
+      return {
+        ...state,
+        selectedRoom: {
+          ...state.selectedRoom,
+          transactionStatus: action.payload,
+        },
+      }
+
     default:
       return state
   }
@@ -132,56 +146,67 @@ export function RoomProvider({ children }: RoomProviderProps) {
 
   const { currentUser } = useAuth()
 
-  // Set up real-time listeners when a room is selected
+  // Set up Pusher real-time listeners when a room is selected
   useEffect(() => {
     if (!state.selectedRoom || !currentUser) return
 
-    const roomId = state.selectedRoom.id
-
-    // Join the room channel for messages and activities
-    const roomChannel = joinRoomChannel(roomId)
-
-    roomChannel.listen('RoomMessageSent', (event: RoomMessage) => {
-      dispatch({ type: 'ADD_MESSAGE', payload: event })
+    // Initialize Pusher
+    const pusher = new Pusher(import.meta.env.VITE_PUSHER_APP_KEY, {
+      cluster: import.meta.env.VITE_PUSHER_APP_CLUSTER,
+      wsHost: import.meta.env.VITE_PUSHER_HOST,
+      wsPort: parseInt(import.meta.env.VITE_PUSHER_PORT || '443'),
+      wssPort: parseInt(import.meta.env.VITE_PUSHER_PORT || '443'),
+      forceTLS: import.meta.env.VITE_PUSHER_SCHEME === 'https',
+      enabledTransports: ['ws', 'wss'],
     })
 
-    roomChannel.listen('RoomActivityLogged', (event: RoomActivityLog) => {
-      dispatch({ type: 'ADD_ACTIVITY', payload: event })
+    // Subscribe to room channel
+    const channel = pusher.subscribe(`room-${state.selectedRoom.id}`)
+
+    // Listen for new messages
+    channel.bind('message-sent', (data: any) => {
+      const message: RoomMessage = {
+        id: data.id,
+        room_id: data.room_id,
+        user_name: data.sender_name,
+        role: data.sender_role,
+        message: data.message,
+        type: data.type,
+        created_at: data.created_at,
+      }
+      addMessage(message)
     })
 
-    // Join presence channel for online status
-    const presenceChannel = joinPresenceChannel(roomId, currentUser.sessionToken || '')
-
-    presenceChannel.here((users: UserPresenceEvent[]) => {
-      // Set initial online users
-      users.forEach(user => {
-        dispatch({
-          type: 'UPDATE_USER_ONLINE_STATUS',
-          payload: { userId: parseInt(user.id), isOnline: true }
-        })
-      })
+    // Listen for room activities
+    channel.bind('activity-logged', (data: any) => {
+      const activity: RoomActivityLog = {
+        id: data.id,
+        room_id: data.room_id,
+        action: data.action,
+        user_name: data.user_name,
+        role: data.role,
+        description: data.description,
+        created_at: data.created_at,
+      }
+      addActivity(activity)
     })
 
-    presenceChannel.joining((user: UserPresenceEvent) => {
-      dispatch({
-        type: 'UPDATE_USER_ONLINE_STATUS',
-        payload: { userId: parseInt(user.id), isOnline: true }
-      })
+    // Listen for user status changes
+    channel.bind('user-status-changed', (data: any) => {
+      updateUserOnlineStatus(data.user_id, data.is_online)
     })
 
-    presenceChannel.leaving((user: UserPresenceEvent) => {
-      dispatch({
-        type: 'UPDATE_USER_ONLINE_STATUS',
-        payload: { userId: parseInt(user.id), isOnline: false }
-      })
+    // Listen for transaction updates
+    channel.bind('transaction-updated', (data: any) => {
+      if (data.transaction && data.transaction.status) {
+        updateTransactionStatus(data.transaction.status)
+      }
     })
 
-    // Cleanup function
     return () => {
-      roomChannel.stopListening('RoomMessageSent')
-      roomChannel.stopListening('RoomActivityLogged')
-      echo.leave(`room.${roomId}`)
-      echo.leave(`presence.room.${roomId}`)
+      channel.unbind_all()
+      pusher.unsubscribe(`room-${state.selectedRoom?.id || ''}`)
+      pusher.disconnect()
     }
   }, [state.selectedRoom?.id, currentUser])
 
@@ -213,6 +238,10 @@ export function RoomProvider({ children }: RoomProviderProps) {
     dispatch({ type: 'SET_ERROR', payload: error })
   }
 
+  const updateTransactionStatus = (status: string) => {
+    dispatch({ type: 'UPDATE_TRANSACTION_STATUS', payload: status })
+  }
+
   const value: RoomContextType = {
     selectedRoom: state.selectedRoom,
     rooms: state.rooms,
@@ -225,6 +254,7 @@ export function RoomProvider({ children }: RoomProviderProps) {
     updateUserOnlineStatus,
     setLoading,
     setError,
+    updateTransactionStatus,
   }
 
   return <RoomContext.Provider value={value}>{children}</RoomContext.Provider>

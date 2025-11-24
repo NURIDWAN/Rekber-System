@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Room;
 use App\Models\RoomUser;
 use App\Models\RoomActivityLog;
+use App\Services\MultiSessionManager;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
@@ -14,7 +15,7 @@ use Illuminate\Support\Str;
 class RoomJoinController extends Controller
 {
     /**
-     * Join a room using a token
+     * Join a room using a token with multi-session support and auto-switch role
      */
     public function joinWithToken(Request $request, string $token): JsonResponse
     {
@@ -28,10 +29,10 @@ class RoomJoinController extends Controller
 
             // Get room data from middleware (validated by ValidateRoomToken middleware)
             $roomId = $request->input('room_id_from_token');
-            $role = $request->input('role_from_token');
+            $requestedRole = $request->input('role_from_token');
             $tokenTimestamp = $request->input('token_timestamp');
 
-            if (!$roomId || !$role) {
+            if (!$roomId || !$requestedRole) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Invalid token data',
@@ -40,74 +41,185 @@ class RoomJoinController extends Controller
 
             // Find the room
             $room = Room::findOrFail($roomId);
+            $multiSessionManager = app(MultiSessionManager::class);
 
-            // Check if user already exists for this role in the room (check first)
-            $existingUser = RoomUser::where('room_id', $roomId)
-                ->where('role', $role)
-                ->first();
-
-            if ($existingUser) {
+            // Get or create user identifier
+            $userIdentifier = $multiSessionManager->getUserIdentifierFromCookie();
+            if (!$userIdentifier) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'This role is already taken in this room',
+                    'message' => 'Unable to identify user',
                 ], 400);
             }
 
-            // Check if room is available for the specified role
-            if (!$this->isRoomAvailableForRole($room, $role)) {
+            // Check if user can join room with auto-switch logic
+            $joinCheck = $multiSessionManager->canJoinRoom($roomId, $requestedRole, $userIdentifier);
+
+            \Log::info('Room join check', [
+                'room_id' => $roomId,
+                'requested_role' => $requestedRole,
+                'user_identifier' => $userIdentifier,
+                'can_join' => $joinCheck['can_join'],
+                'reason' => $joinCheck['reason'],
+                'suggested_action' => $joinCheck['suggested_action'],
+                'existing_session' => $joinCheck['existing_session']
+            ]);
+
+            // Handle different scenarios based on join check
+            if (!$joinCheck['can_join']) {
+                // Auto-switch role if alternative is available
+                if (isset($joinCheck['alternative_role'])) {
+                    $suggestedRole = $joinCheck['alternative_role'];
+                    return response()->json([
+                        'success' => false,
+                        'message' => "Role {$requestedRole} is not available. Would you like to join as {$suggestedRole} instead?",
+                        'requires_role_switch' => true,
+                        'suggested_role' => $suggestedRole,
+                        'room_id' => $roomId,
+                        'room_number' => $room->room_number,
+                    ], 409); // 409 Conflict
+                }
+
                 return response()->json([
                     'success' => false,
-                    'message' => 'Room is not available for this role',
+                    'message' => $joinCheck['reason'],
                 ], 400);
             }
 
-            // Create the room user
+            // Process the join/switch based on suggested action
+            $roomUser = null;
+            $actualRole = $requestedRole;
+            $action = $joinCheck['suggested_action'];
+
             DB::beginTransaction();
             try {
-                $sessionToken = Str::random(32);
+                switch ($action) {
+                    case 'reconnect':
+                        // User already has session - just reactivate it
+                        $roomUser = RoomUser::where('room_id', $roomId)
+                                           ->where('user_identifier', $userIdentifier)
+                                           ->where('role', $requestedRole)
+                                           ->first();
 
-                \Log::info('API: Creating room user', [
-                    'room_id' => $roomId,
-                    'name' => $validated['name'],
-                    'role' => $role,
-                    'session_token' => substr($sessionToken, 0, 8) . '...',
-                    'cookie_name' => 'room_session_' . $roomId
-                ]);
+                        if ($roomUser) {
+                            $roomUser->update([
+                                'is_online' => true,
+                                'last_seen' => now(),
+                                'name' => $validated['name'],
+                                'phone' => $validated['phone'],
+                            ]);
 
-                $roomUser = RoomUser::create([
-                    'room_id' => $roomId,
-                    'name' => $validated['name'],
-                    'phone' => $validated['phone'],
-                    'role' => $role,
-                    'session_token' => $sessionToken,
-                    'joined_at' => now(),
-                    'is_online' => true,
-                    'last_seen' => now(),
-                ]);
+                            // Log reconnection
+                            RoomActivityLog::create([
+                                'room_id' => $roomId,
+                                'user_name' => $validated['name'],
+                                'role' => $requestedRole,
+                                'action' => 'reconnected',
+                                'description' => "{$validated['name']} reconnected as {$requestedRole}",
+                                'timestamp' => now(),
+                            ]);
+                        }
+                        break;
 
-                // Log the activity
-                RoomActivityLog::create([
-                    'room_id' => $roomId,
-                    'user_name' => $validated['name'],
-                    'role' => $role,
-                    'action' => 'joined_room',
-                    'description' => "{$validated['name']} joined as {$role}",
-                    'timestamp' => now(),
-                ]);
+                    case 'switch_role':
+                        // User wants to switch roles in the same room
+                        $existingSession = RoomUser::where('room_id', $roomId)
+                                                 ->where('user_identifier', $userIdentifier)
+                                                 ->where('is_online', true)
+                                                 ->first();
+
+                        if ($existingSession) {
+                            $roomUser = $existingSession->switchRole($requestedRole);
+                            $actualRole = $roomUser->role;
+
+                            // Log role switch
+                            RoomActivityLog::create([
+                                'room_id' => $roomId,
+                                'user_name' => $validated['name'],
+                                'role' => $actualRole,
+                                'action' => 'role_switch',
+                                'description' => "{$validated['name']} switched from {$existingSession->role} to {$actualRole}",
+                                'timestamp' => now(),
+                            ]);
+                        }
+                        break;
+
+                    case 'join':
+                    default:
+                        // New user joining
+                        $sessionToken = $multiSessionManager->generateSessionToken($roomId, $requestedRole, $userIdentifier);
+                        $deviceFingerprint = RoomUser::generateDeviceFingerprint();
+
+                        \Log::info('API: Creating room user', [
+                            'room_id' => $roomId,
+                            'name' => $validated['name'],
+                            'role' => $requestedRole,
+                            'user_identifier' => $userIdentifier,
+                            'session_token' => substr($sessionToken, 0, 8) . '...',
+                            'device_fingerprint' => substr($deviceFingerprint, 0, 8) . '...'
+                        ]);
+
+                        $roomUser = RoomUser::create([
+                            'room_id' => $roomId,
+                            'name' => $validated['name'],
+                            'phone' => $validated['phone'],
+                            'role' => $requestedRole,
+                            'session_token' => $sessionToken,
+                            'user_identifier' => $userIdentifier,
+                            'device_fingerprint' => $deviceFingerprint,
+                            'session_context' => [
+                                'joined_via' => 'token',
+                                'token_timestamp' => $tokenTimestamp,
+                                'user_agent' => $request->userAgent(),
+                                'ip_address' => $request->ip(),
+                            ],
+                            'joined_at' => now(),
+                            'is_online' => true,
+                            'last_seen' => now(),
+                        ]);
+
+                        // Log the activity
+                        RoomActivityLog::create([
+                            'room_id' => $roomId,
+                            'user_name' => $validated['name'],
+                            'role' => $requestedRole,
+                            'action' => 'joined_room',
+                            'description' => "{$validated['name']} joined as {$requestedRole}",
+                            'timestamp' => now(),
+                        ]);
+
+                        $actualRole = $requestedRole;
+                        break;
+                }
+
+                if (!$roomUser) {
+                    throw new \Exception('Failed to create or retrieve room user session');
+                }
 
                 // Update room status if needed
                 $this->updateRoomStatus($room);
 
                 DB::commit();
 
+                // Generate cookie name for response
+                $cookieName = $multiSessionManager->generateCookieName($roomId, $actualRole, $userIdentifier);
+
+                // Get user's other active sessions
+                $otherSessions = $multiSessionManager->getUserSessions($userIdentifier);
+
                 return response()->json([
                     'success' => true,
-                    'message' => 'Successfully joined the room',
+                    'message' => $this->getSuccessMessage($action, $actualRole),
                     'data' => [
                         'room_id' => $roomId,
-                        'role' => $role,
-                        'session_token' => $sessionToken,
+                        'room_number' => $room->room_number,
+                        'role' => $actualRole,
+                        'session_token' => $roomUser->session_token,
                         'user_name' => $validated['name'],
+                        'user_identifier' => $userIdentifier,
+                        'cookie_name' => $cookieName,
+                        'action_performed' => $action,
+                        'other_active_sessions' => $otherSessions,
                     ]
                 ]);
 
@@ -131,6 +243,7 @@ class RoomJoinController extends Controller
             \Log::error('Room join error: ' . $e->getMessage(), [
                 'token' => $token,
                 'request' => $request->all(),
+                'trace' => $e->getTraceAsString()
             ]);
 
             return response()->json([
@@ -138,6 +251,19 @@ class RoomJoinController extends Controller
                 'message' => 'An error occurred while joining the room',
             ], 500);
         }
+    }
+
+    /**
+     * Get appropriate success message based on action performed
+     */
+    private function getSuccessMessage(string $action, string $role): string
+    {
+        return match ($action) {
+            'reconnect' => "Successfully reconnected to the room as {$role}",
+            'switch_role' => "Successfully switched to {$role} role in the room",
+            'join' => "Successfully joined the room as {$role}",
+            default => "Successfully joined the room as {$role}",
+        };
     }
 
     /**

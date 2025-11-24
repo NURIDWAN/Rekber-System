@@ -3,17 +3,21 @@ import { useState, useEffect, useRef } from 'react';
 import { cn } from '@/lib/utils';
 
 import RoomsNavbar from '@/components/RoomsNavbar';
+import MultiSessionStatus from '@/components/MultiSessionStatus';
+import { useMultiSession } from '@/contexts/MultiSessionContext';
+// WebSocket imports
 import {
     listenToMessages,
     listenToUserStatus,
     listenToActivities,
     listenToFileUploads,
     getConnectionStatus,
+    unsubscribeFromRoom,
     onConnectionEstablished,
     onConnectionError,
     onConnectionDisconnected,
-    unsubscribeFromRoom,
 } from '@/lib/websocket';
+import transactionWebSocket, { TransactionUpdateEvent, FileVerificationEvent } from '@/services/transaction-websocket';
 import {
     Send,
     User,
@@ -23,6 +27,8 @@ import {
     MessageCircle,
     Activity,
 } from 'lucide-react';
+import Toast, { ToastType } from '@/components/Toast';
+import { transactionAPI } from '@/services/transaction-api';
 
 interface RoomData {
     id: number;
@@ -66,17 +72,94 @@ interface PageProps {
     encrypted_room_id?: string;
 }
 
+type ConnectionState = 'connected' | 'connecting' | 'disconnected';
+
 export default function RoomPage({ room, currentUser, share_links, encrypted_room_id }: PageProps) {
     const { data, setData } = useForm({
         message: '',
         type: 'text',
     });
+
+    // Multi-session management
+    const {
+        setActiveRoom,
+        getSessionByRoomId,
+        getActiveSession,
+        updateSession,
+        sessions,
+        error: sessionError
+    } = useMultiSession();
+
+    // Set this room as active
+    useEffect(() => {
+        if (currentUser) {
+            setActiveRoom(room.id, currentUser.role);
+
+            // Update session info with latest data
+            const existingSession = getSessionByRoomId(room.id);
+            if (existingSession) {
+                updateSession(room.id, {
+                    roomNumber: room.room_number,
+                    userName: currentUser.name,
+                    role: currentUser.role,
+                    isOnline: true,
+                    lastSeen: new Date().toISOString()
+                });
+            }
+        }
+    }, [room.id, currentUser]);
     const [processing, setProcessing] = useState(false);
 
+    // Initialize Transaction WebSocket Service
+    useEffect(() => {
+        if (room.id && currentUser.role) {
+            transactionWebSocket.setContext(room.id, currentUser.role);
+            transactionWebSocket.start();
+        }
+
+        return () => {
+            transactionWebSocket.stop();
+        };
+    }, [room.id, currentUser.role]);
+
     const [messages, setMessages] = useState(room.messages || []);
-    const [connectionStatus, setConnectionStatus] = useState<'connected' | 'connecting' | 'disconnected'>('connecting');
+    const [connectionStatus, setConnectionStatus] = useState<ConnectionState>('connecting');
     const [onlineUsers, setOnlineUsers] = useState(new Set());
     const [recentActivities, setRecentActivities] = useState<any[]>([]);
+
+    // Transaction state
+    const [currentRoomStatus, setCurrentRoomStatus] = useState(room.status);
+    const [transactionData, setTransactionData] = useState<any>(null);
+    const [loadingTransaction, setLoadingTransaction] = useState(true);
+
+    // Load transaction data on component mount
+    useEffect(() => {
+        const loadTransactionData = async () => {
+            try {
+                setLoadingTransaction(true);
+                const response = await transactionAPI.getTransactionByRoomId(room.id);
+                if (response.success && response.data) {
+                    setTransactionData(response.data);
+                    setCurrentRoomStatus(response.data.status);
+                }
+            } catch (error) {
+                console.error('Failed to load transaction data:', error);
+                // Keep using room status as fallback
+            } finally {
+                setLoadingTransaction(false);
+            }
+        };
+
+        if (room.id) {
+            loadTransactionData();
+        }
+    }, [room.id]);
+
+    useEffect(() => {
+        setCurrentRoomStatus(room.status);
+    }, [room.status]);
+    const [lastTransactionUpdate, setLastTransactionUpdate] = useState<Date | null>(null);
+    const [isTransactionConnected, setIsTransactionConnected] = useState(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const sseRef = useRef<EventSource | null>(null);
@@ -93,7 +176,7 @@ export default function RoomPage({ room, currentUser, share_links, encrypted_roo
         const lastKnownId = room.messages && room.messages.length
             ? room.messages[room.messages.length - 1].id
             : 0;
-              const url = new URL(`/api/rooms/${encrypted_room_id || room.id}/sse`, window.location.origin);
+        const url = new URL(`/api/rooms/${encrypted_room_id || room.id}/sse`, window.location.origin);
         if (lastKnownId) {
             url.searchParams.set('last_id', String(lastKnownId));
         }
@@ -144,6 +227,61 @@ export default function RoomPage({ room, currentUser, share_links, encrypted_roo
             setPinCode(share_links.pin ?? '');
         }
     }, [share_links]);
+
+    // Transaction WebSocket integration
+    useEffect(() => {
+        // Listen to transaction updates for this room
+        const unsubscribeTransaction = transactionWebSocket.onTransactionUpdate(
+            (event: TransactionUpdateEvent) => {
+                console.log('Transaction update received:', event);
+
+                // Only process updates for this room
+                if (event.room.id !== room.id) return;
+
+                // Update room status and transaction data
+                setCurrentRoomStatus(event.transaction.status);
+                setTransactionData(event.transaction);
+                setLastTransactionUpdate(new Date());
+                setIsTransactionConnected(true);
+
+                console.log('Transaction status updated to:', event.transaction.status);
+            },
+            room.id // Listen to updates for this specific room
+        );
+
+        // Listen to file verification updates for this room
+        const unsubscribeFile = transactionWebSocket.onFileVerificationUpdate(
+            (event: FileVerificationEvent) => {
+                console.log('File verification update received:', event);
+
+                // Only process updates for this room
+                if (event.room.id !== room.id) return;
+
+                // Update transaction data from file verification event
+                if (event.transaction) {
+                    setCurrentRoomStatus(event.transaction.status);
+                    setTransactionData(event.transaction);
+                }
+
+                setLastTransactionUpdate(new Date());
+                setIsTransactionConnected(true);
+
+                console.log('File verification updated, transaction status:', event.transaction?.status);
+            },
+            room.id // Listen to updates for this specific room
+        );
+
+        // Set connection status checker
+        const connectionChecker = setInterval(() => {
+            setIsTransactionConnected(transactionWebSocket.getConnectionStatus());
+        }, 5000);
+
+        return () => {
+            unsubscribeTransaction();
+            unsubscribeFile();
+            clearInterval(connectionChecker);
+        };
+    }, [room.id]);
 
     const csrfToken = (document.querySelector('meta[name="csrf-token"]') as HTMLMetaElement)?.content;
 
@@ -346,6 +484,17 @@ export default function RoomPage({ room, currentUser, share_links, encrypted_roo
         }
     };
 
+
+    const [toast, setToast] = useState<{ message: string; type: ToastType; isVisible: boolean }>({
+        message: '',
+        type: 'info',
+        isVisible: false,
+    });
+
+    const showToast = (message: string, type: ToastType = 'info') => {
+        setToast({ message, type, isVisible: true });
+    };
+
     const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
         if (!file) return;
@@ -354,17 +503,23 @@ export default function RoomPage({ room, currentUser, share_links, encrypted_roo
         formData.append('file', file);
         formData.append('file_type', currentUser.role === 'buyer' ? 'payment_proof' : 'shipping_receipt');
 
+        // Optimistic UI update or loading state could be added here
+        setProcessing(true);
+
         router.post(`/rooms/${encrypted_room_id || room.id}/upload`, formData, {
             onSuccess: (page) => {
                 if (fileInputRef.current) {
                     fileInputRef.current.value = '';
                 }
+                showToast('File berhasil diunggah!', 'success');
                 // Reload messages to show the uploaded file
                 router.reload({ only: ['room'] });
             },
             onError: (errors) => {
                 console.error('Upload errors:', errors);
-            }
+                showToast('Gagal mengunggah file. Silakan coba lagi.', 'error');
+            },
+            onFinish: () => setProcessing(false),
         });
     };
 
@@ -422,19 +577,20 @@ export default function RoomPage({ room, currentUser, share_links, encrypted_roo
 
     const currentStepIndex = Math.min(
         transactionSteps.length,
-        statusToStepIndex[room.status] ?? (hasBuyer ? 1 : 0)
+        statusToStepIndex[currentRoomStatus] ?? (hasBuyer ? 1 : 0)
     );
+    const visibleStepIndex = Math.max(1, currentStepIndex || 1);
 
     const progressState = transactionSteps.map((step, idx) => {
         const stepNumber = idx + 1;
         let state: 'done' | 'current' | 'pending' | 'error' = 'pending';
 
-        if (room.status === 'payment_rejected' && step.key === 'payment_verified') {
+        if (currentRoomStatus === 'payment_rejected' && step.key === 'payment_verified') {
             state = 'error';
         } else if (stepNumber < currentStepIndex) {
             state = 'done';
         } else if (stepNumber === currentStepIndex) {
-            state = room.status === 'payment_rejected' ? 'error' : 'current';
+            state = currentRoomStatus === 'payment_rejected' ? 'error' : 'current';
         }
 
         return { ...step, state, stepNumber };
@@ -447,12 +603,30 @@ export default function RoomPage({ room, currentUser, share_links, encrypted_roo
         emerald: 'bg-emerald-100 text-emerald-700 ring-emerald-200',
         red: 'bg-red-100 text-red-700 ring-red-200',
     };
-    const statusInfo = statusMeta[room.status] ?? statusMeta.in_use;
+    const heroToneClasses: Record<typeof statusMeta[keyof typeof statusMeta]['tone'], string> = {
+        slate: 'bg-white/10 text-white ring-white/20',
+        amber: 'bg-amber-400/25 text-white ring-amber-200/50',
+        blue: 'bg-blue-400/25 text-white ring-blue-200/50',
+        violet: 'bg-violet-400/25 text-white ring-violet-200/50',
+        emerald: 'bg-emerald-400/20 text-white ring-emerald-200/60',
+        red: 'bg-red-500/25 text-white ring-red-200/50',
+    };
+    const connectionToneClasses: Record<ConnectionState, string> = {
+        connected: 'bg-emerald-500/20 text-emerald-50 ring-emerald-300/40',
+        connecting: 'bg-amber-400/20 text-amber-50 ring-amber-200/40',
+        disconnected: 'bg-red-500/25 text-red-50 ring-red-300/40',
+    };
+    const connectionDotTone: Record<ConnectionState, string> = {
+        connected: 'bg-emerald-300',
+        connecting: 'bg-amber-300',
+        disconnected: 'bg-red-300',
+    };
+    const statusInfo = statusMeta[currentRoomStatus] ?? statusMeta.in_use;
 
     return (
         <>
             <Head title={`Room #${room.room_number} - Rekber System`} />
-            <div className="min-h-screen bg-slate-50">
+            <div className="min-h-screen bg-slate-100">
                 <RoomsNavbar
                     roomNumber={room.room_number}
                     roomStatus={room.status}
@@ -462,34 +636,136 @@ export default function RoomPage({ room, currentUser, share_links, encrypted_roo
                     encryptedRoomId={encrypted_room_id}
                 />
 
-                <div className="max-w-7xl mx-auto px-4 py-4">
-                    <div className="mb-4">
-                        <div className="flex items-center gap-3">
-                            <div>
-                                <p className="text-xs text-slate-500">Visual Process Hub</p>
-                                <h1 className="text-xl font-bold text-slate-900">Room #{room.room_number}</h1>
+                <div className="mx-auto max-w-[1400px] px-4 lg:px-6 py-5 space-y-5">
+                    <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-blue-600 via-indigo-600 to-slate-900 text-white shadow-xl border border-blue-500/20">
+                        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.12),transparent_35%)]" />
+                        <div className="absolute inset-y-0 right-0 w-1/3 bg-white/10 blur-3xl" />
+                        <div className="relative p-6 lg:p-8">
+                            <div className="grid grid-cols-12 gap-5 items-start">
+                                <div className="col-span-12 lg:col-span-8 space-y-4">
+                                    <div className="flex flex-wrap items-center gap-3">
+                                        <div>
+                                            <p className="text-[11px] uppercase tracking-wide text-white/70">Visual Process Hub</p>
+                                            <div className="flex flex-wrap items-center gap-3">
+                                                <h1 className="text-2xl font-bold">Room #{room.room_number}</h1>
+                                                <span className={cn(
+                                                    'inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold ring-1',
+                                                    heroToneClasses[statusInfo.tone]
+                                                )}>
+                                                    <span className="h-2 w-2 rounded-full bg-white/80" />
+                                                    {statusInfo.label}
+                                                </span>
+                                            </div>
+                                        </div>
+                                        <div className="ml-auto flex flex-wrap items-center gap-2 text-xs">
+                                            <span className={cn(
+                                                'inline-flex items-center gap-2 px-3 py-1 rounded-full font-semibold ring-1',
+                                                connectionToneClasses[connectionStatus]
+                                            )}>
+                                                <span className={cn('h-2 w-2 rounded-full', connectionDotTone[connectionStatus])} />
+                                                {connectionStatus === 'connected' ? 'Online' : connectionStatus === 'connecting' ? 'Menyambung' : 'Terputus'}
+                                            </span>
+                                            <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/15 text-white ring-1 ring-white/20 font-semibold">
+                                                <User className="w-4 h-4" />
+                                                {currentUser.role.toUpperCase()}
+                                            </span>
+                                            <span className={cn(
+                                                'inline-flex items-center gap-2 px-3 py-1 rounded-full ring-1 ring-white/20 font-semibold',
+                                                currentUser.is_online ? 'bg-emerald-400/20 text-white' : 'bg-white/10 text-white/70'
+                                            )}>
+                                                <span className={cn('h-2 w-2 rounded-full', currentUser.is_online ? 'bg-emerald-300' : 'bg-white/50')} />
+                                                {currentUser.is_online ? 'Aktif' : 'Idle'}
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                                        <div className="rounded-2xl bg-white/10 border border-white/15 p-3 shadow-sm">
+                                            <p className="text-[11px] text-white/80 uppercase tracking-wide">Buyer</p>
+                                            <div className="mt-1 flex items-center justify-between gap-2">
+                                                <span className="font-semibold leading-tight">{room.buyer?.name ?? 'Belum bergabung'}</span>
+                                                <span className={cn('w-2 h-2 rounded-full', room.buyer?.is_online ? 'bg-emerald-300' : 'bg-white/50')} />
+                                            </div>
+                                        </div>
+                                        <div className="rounded-2xl bg-white/10 border border-white/15 p-3 shadow-sm">
+                                            <p className="text-[11px] text-white/80 uppercase tracking-wide">Seller</p>
+                                            <div className="mt-1 flex items-center justify-between gap-2">
+                                                <span className="font-semibold leading-tight">{room.seller?.name ?? 'Belum bergabung'}</span>
+                                                <span className={cn('w-2 h-2 rounded-full', room.seller?.is_online ? 'bg-emerald-300' : 'bg-white/50')} />
+                                            </div>
+                                        </div>
+                                        <div className="rounded-2xl bg-white/10 border border-white/15 p-3 shadow-sm">
+                                            <p className="text-[11px] text-white/80 uppercase tracking-wide">Pesan</p>
+                                            <div className="mt-1 flex items-center justify-between gap-2">
+                                                <span className="text-lg font-bold">{messages.length}</span>
+                                                <MessageCircle className="w-4 h-4 text-white/80" />
+                                            </div>
+                                        </div>
+                                        <div className="rounded-2xl bg-white/10 border border-white/15 p-3 shadow-sm">
+                                            <p className="text-[11px] text-white/80 uppercase tracking-wide">Status Room</p>
+                                            <div className="mt-1 flex items-center justify-between gap-2">
+                                                <span className="font-semibold capitalize">{room.status === 'free' ? 'Free' : 'In Use'}</span>
+                                                <Shield className="w-4 h-4 text-white/80" />
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                                        <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 ring-1 ring-white/15">
+                                            <span className="h-2 w-2 rounded-full bg-blue-200" />
+                                            {hasBuyer ? 'Buyer aktif' : 'Buyer belum join'}
+                                        </span>
+                                        <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 ring-1 ring-white/15">
+                                            <span className="h-2 w-2 rounded-full bg-purple-200" />
+                                            {hasSeller ? 'Seller aktif' : 'Seller belum join'}
+                                        </span>
+                                        <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 ring-1 ring-white/15">
+                                            <span className="h-2 w-2 rounded-full bg-emerald-200" />
+                                            Multi-session aman
+                                        </span>
+                                    </div>
+                                </div>
+
+                                <div className="col-span-12 lg:col-span-4">
+                                    <div className="rounded-2xl bg-white/95 backdrop-blur border border-white/60 shadow-xl p-3">
+                                        <MultiSessionStatus
+                                            currentRoomId={room.id}
+                                            onSwitchRoom={(roomId, role) => {
+                                                const targetRoom = sessions.find(s => s.roomId === roomId);
+                                                if (targetRoom) {
+                                                    window.location.href = `/rooms/${targetRoom.roomNumber}`;
+                                                }
+                                            }}
+                                        />
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
 
-                    <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5 mb-6">
-                        <div className="flex flex-wrap items-center gap-3 mb-3">
-                            <span className={cn(
-                                'inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold ring-1',
-                                toneClasses[statusInfo.tone]
-                            )}>
-                                <span className="h-2 w-2 rounded-full bg-current opacity-70" />
-                                {statusInfo.label}
-                            </span>
+                    <div className="bg-white border border-slate-200 rounded-3xl shadow-md p-5 lg:p-6">
+                        <div className="flex flex-wrap items-center gap-3 mb-4">
+                            <div className="flex items-center gap-2">
+                                <span className={cn(
+                                    'inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold ring-1',
+                                    toneClasses[statusInfo.tone]
+                                )}>
+                                    <span className="h-2 w-2 rounded-full bg-current opacity-70" />
+                                    {statusInfo.label}
+                                </span>
+                                <span className="text-xs text-slate-500">
+                                    Tahap {visibleStepIndex} dari {transactionSteps.length}
+                                </span>
+                            </div>
                             <div className="ml-auto flex flex-wrap gap-2 text-xs font-semibold">
                                 <span className={cn(
-                                    'inline-flex items-center gap-1 px-2 py-1 rounded-full ring-1 ring-slate-200',
+                                    'inline-flex items-center gap-2 px-3 py-1 rounded-full ring-1 ring-slate-200',
                                     hasBuyer ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-500'
                                 )}>
                                     {hasBuyer ? 'Buyer aktif' : 'Buyer belum join'}
                                 </span>
                                 <span className={cn(
-                                    'inline-flex items-center gap-1 px-2 py-1 rounded-full ring-1 ring-slate-200',
+                                    'inline-flex items-center gap-2 px-3 py-1 rounded-full ring-1 ring-slate-200',
                                     hasSeller ? 'bg-purple-50 text-purple-700' : 'bg-slate-100 text-slate-500'
                                 )}>
                                     {hasSeller ? 'Seller aktif' : 'Seller belum join'}
@@ -530,12 +806,28 @@ export default function RoomPage({ room, currentUser, share_links, encrypted_roo
                                 </div>
                             ))}
                         </div>
+
+                        {lastTransactionUpdate && (
+                            <div className="mt-4 p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
+                                        <span className="text-sm font-medium text-emerald-800">
+                                            Real-time updates enabled
+                                        </span>
+                                    </div>
+                                    <span className="text-xs text-emerald-600">
+                                        Last update: {lastTransactionUpdate.toLocaleTimeString()}
+                                    </span>
+                                </div>
+                            </div>
+                        )}
                     </div>
 
-                    <div className="grid grid-cols-12 gap-4">
-                        <div className="col-span-12 lg:col-span-8 flex flex-col gap-4">
-                            <div className="bg-white/80 backdrop-blur border border-slate-200 rounded-2xl shadow-lg flex flex-col h-[70vh] min-h-[520px] overflow-hidden">
-                                <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
+                    <div className="grid grid-cols-12 gap-5 items-start">
+                        <div className="col-span-12 xl:col-span-8 flex flex-col gap-5">
+                            <div className="bg-white rounded-3xl shadow-xl border border-slate-200 flex flex-col h-[72vh] min-h-[560px] overflow-hidden">
+                                <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 bg-slate-50/80">
                                     <div className="flex items-center gap-2">
                                         <MessageCircle className="w-5 h-5 text-slate-600" />
                                         <div>
@@ -590,7 +882,7 @@ export default function RoomPage({ room, currentUser, share_links, encrypted_roo
                                     <div ref={messagesEndRef} />
                                 </div>
 
-                                <div className="px-4 py-3 border-t border-slate-200 bg-slate-50">
+                                <div className="px-5 py-4 border-t border-slate-200 bg-slate-50">
                                     <form
                                         onSubmit={(e) => {
                                             e.preventDefault();
@@ -622,7 +914,7 @@ export default function RoomPage({ room, currentUser, share_links, encrypted_roo
                             </div>
                         </div>
 
-                        <div className="col-span-12 lg:col-span-4 space-y-4">
+                        <div className="col-span-12 xl:col-span-4 space-y-4">
                             <div className="bg-gradient-to-b from-slate-900 via-slate-800 to-slate-900 text-white rounded-2xl shadow-lg p-5 border border-slate-800">
                                 <div className="flex items-start justify-between mb-4">
                                     <div>
@@ -686,7 +978,7 @@ export default function RoomPage({ room, currentUser, share_links, encrypted_roo
                                 </div>
                             </div>
 
-                            <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-4">
+                            <div className="bg-white border border-slate-200 rounded-2xl shadow-md p-4">
                                 <div className="flex items-center justify-between mb-3">
                                     <div>
                                         <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Tautan Room</p>
@@ -780,7 +1072,7 @@ export default function RoomPage({ room, currentUser, share_links, encrypted_roo
                                 )}
                             </div>
 
-                            <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-4">
+                            <div className="bg-white border border-slate-200 rounded-2xl shadow-md p-4">
                                 <h3 className="text-sm font-semibold text-slate-900 mb-2">Tutorial Transaksi</h3>
                                 <p className="text-sm text-slate-600 mb-3">Panduan singkat agar semua role memahami alur.</p>
                                 <ol className="space-y-2 text-sm text-slate-700 list-decimal list-inside">
@@ -794,7 +1086,7 @@ export default function RoomPage({ room, currentUser, share_links, encrypted_roo
                                 </div>
                             </div>
 
-                            <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-4">
+                            <div className="bg-white border border-slate-200 rounded-2xl shadow-md p-4">
                                 <h3 className="text-sm font-semibold text-slate-900 mb-2">Aktivitas Terbaru</h3>
                                 {recentActivities.length > 0 ? (
                                     <div className="space-y-2">
@@ -810,7 +1102,7 @@ export default function RoomPage({ room, currentUser, share_links, encrypted_roo
                                 )}
                             </div>
 
-                            <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200 rounded-2xl shadow-sm p-4">
+                            <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200 rounded-2xl shadow-md p-4">
                                 <h3 className="text-sm font-semibold text-slate-900 mb-2 flex items-center gap-2">
                                     <Users className="w-4 h-4 text-blue-600" />
                                     Kelola Undangan
@@ -839,7 +1131,9 @@ export default function RoomPage({ room, currentUser, share_links, encrypted_roo
             </div>
             {showJoinModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur">
+                    {/* ... modal content ... */}
                     <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-xl p-5">
+                        {/* ... existing modal content ... */}
                         <div className="flex items-center justify-between mb-3">
                             <div>
                                 <p className="text-[11px] uppercase text-slate-500 font-semibold">Join Room</p>
@@ -871,27 +1165,27 @@ export default function RoomPage({ room, currentUser, share_links, encrypted_roo
                             ))}
                         </div>
 
-                                <div className="rounded-xl border border-slate-200 p-3 bg-slate-50">
-                                    <p className="text-xs text-slate-500 mb-1">Link join</p>
-                                    <div className="flex items-center gap-2">
-                                        <div className="flex-1 text-sm text-slate-700 break-all">
-                                            {shareLinks?.[selectedRole]?.join ?? '-'}
-                                        </div>
-                                        <button
-                                            onClick={async () => {
-                                                const existing = shareLinks?.[selectedRole]?.join;
-                                                let linkToCopy = existing;
-                                                if (!linkToCopy) {
-                                                    const updated = await refreshShareLinks(pinEnabled ? pinCode : undefined);
-                                                    linkToCopy = updated?.[selectedRole]?.join;
-                                                }
-                                                await copyToClipboard(linkToCopy || '');
-                                            }}
-                                            className="px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition"
-                                        >
-                                            Salin
-                                        </button>
-                                    </div>
+                        <div className="rounded-xl border border-slate-200 p-3 bg-slate-50">
+                            <p className="text-xs text-slate-500 mb-1">Link join</p>
+                            <div className="flex items-center gap-2">
+                                <div className="flex-1 text-sm text-slate-700 break-all">
+                                    {shareLinks?.[selectedRole]?.join ?? '-'}
+                                </div>
+                                <button
+                                    onClick={async () => {
+                                        const existing = shareLinks?.[selectedRole]?.join;
+                                        let linkToCopy = existing;
+                                        if (!linkToCopy) {
+                                            const updated = await refreshShareLinks(pinEnabled ? pinCode : undefined);
+                                            linkToCopy = updated?.[selectedRole]?.join;
+                                        }
+                                        await copyToClipboard(linkToCopy || '');
+                                    }}
+                                    className="px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition"
+                                >
+                                    Salin
+                                </button>
+                            </div>
                             {pinEnabled && pinCode && (
                                 <div className="mt-2 text-xs text-slate-600">
                                     PIN: <span className="font-semibold text-slate-900">{pinCode}</span> (wajib dimasukkan ketika membuka link)
@@ -906,6 +1200,12 @@ export default function RoomPage({ room, currentUser, share_links, encrypted_roo
                     </div>
                 </div>
             )}
+            <Toast
+                message={toast.message}
+                type={toast.type}
+                isVisible={toast.isVisible}
+                onClose={() => setToast(prev => ({ ...prev, isVisible: false }))}
+            />
         </>
     );
 }

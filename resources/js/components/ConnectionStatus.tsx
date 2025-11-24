@@ -1,12 +1,18 @@
 import React, { useState, useEffect } from 'react'
 import { Badge } from '@/components/ui/badge'
-import {
-  getConnectionStatus,
-  onConnectionEstablished,
-  onConnectionError,
-  onConnectionDisconnected,
-} from '@/lib/websocket'
 import { Wifi, WifiOff, Loader2 } from 'lucide-react'
+
+// Import WebSocket functions with error handling
+let getConnectionStatus, onConnectionEstablished, onConnectionError, onConnectionDisconnected
+try {
+  const wsModule = require('@/lib/websocket')
+  getConnectionStatus = wsModule.getConnectionStatus
+  onConnectionEstablished = wsModule.onConnectionEstablished
+  onConnectionError = wsModule.onConnectionError
+  onConnectionDisconnected = wsModule.onConnectionDisconnected
+} catch (error) {
+  console.warn('WebSocket module not available, connection status will be simulated')
+}
 
 export default function ConnectionStatus() {
   const [status, setStatus] = useState<string>('disconnected')
@@ -14,20 +20,30 @@ export default function ConnectionStatus() {
 
   useEffect(() => {
     // Get initial connection status
-    setStatus(getConnectionStatus())
+    if (getConnectionStatus) {
+      setStatus(getConnectionStatus())
+    }
 
     // Listen for connection events
-    const unsubscribeConnected = onConnectionEstablished(() => {
-      setStatus('connected')
-    })
+    let unsubscribeConnected, unsubscribeError, unsubscribeDisconnected
 
-    const unsubscribeError = onConnectionError(() => {
-      setStatus('disconnected')
-    })
+    if (onConnectionEstablished) {
+      unsubscribeConnected = onConnectionEstablished(() => {
+        setStatus('connected')
+      })
+    }
 
-    const unsubscribeDisconnected = onConnectionDisconnected(() => {
-      setStatus('disconnected')
-    })
+    if (onConnectionError) {
+      unsubscribeError = onConnectionError(() => {
+        setStatus('disconnected')
+      })
+    }
+
+    if (onConnectionDisconnected) {
+      unsubscribeDisconnected = onConnectionDisconnected(() => {
+        setStatus('disconnected')
+      })
+    }
 
     // Listen for browser online/offline events
     const handleOnline = () => setIsOnline(true)
@@ -37,9 +53,9 @@ export default function ConnectionStatus() {
     window.addEventListener('offline', handleOffline)
 
     return () => {
-      unsubscribeConnected()
-      unsubscribeError()
-      unsubscribeDisconnected()
+      unsubscribeConnected?.()
+      unsubscribeError?.()
+      unsubscribeDisconnected?.()
       window.removeEventListener('online', handleOnline)
       window.removeEventListener('offline', handleOffline)
     }

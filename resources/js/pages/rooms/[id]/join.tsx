@@ -22,11 +22,17 @@ interface PageProps {
         pin?: string | null;
         pin_enabled?: boolean;
     };
+    encrypted_urls?: {
+        join_buyer?: string;
+        join_seller?: string;
+        enter_buyer?: string;
+        enter_seller?: string;
+    };
     token?: string;
     errors?: Record<string, string>;
 }
 
-export default function JoinRoomPage({ room, role, share_links, errors: serverErrors = {} }: PageProps) {
+export default function JoinRoomPage({ room, role, share_links, encrypted_urls, errors: serverErrors = {} }: PageProps) {
     const { data, setData, errors, reset } = useForm({
         name: '',
         phone: '',
@@ -124,12 +130,137 @@ export default function JoinRoomPage({ room, role, share_links, errors: serverEr
             }
 
             const result = await response.json();
-            const sessionToken = result?.data?.session_token;
-            if (sessionToken) {
-                // Use the actual room ID from the API response to match server-side cookie naming
-                const roomId = result?.data?.room_id || room.id;
-                document.cookie = `room_session_${roomId}=${sessionToken};path=/;max-age=${60 * 120}`;
-                console.log(`Setting session cookie for room ${roomId}:`, sessionToken);
+            if (result.success && result.data) {
+                const sessionToken = result.data.session_token;
+                const roomId = result.data.room_id;
+                const cookieName = result.data.cookie_name;
+                const userIdentifier = result.data.user_identifier;
+                const action = result.data.action_performed;
+                const otherSessions = result.data.other_active_sessions || [];
+
+                // Set session cookie with namespace
+                if (sessionToken && cookieName) {
+                    const expires = new Date();
+                    expires.setTime(expires.getTime() + (60 * 120 * 1000)); // 120 minutes
+
+                    // Set room-specific session cookie
+                    document.cookie = `${cookieName}=${sessionToken};` +
+                        `expires=${expires.toUTCString()};` +
+                        `path=/;` +
+                        `SameSite=Lax;` +
+                        (window.location.protocol === 'https:' ? 'Secure;' : '');
+
+                    // Set user identifier cookie (30 days)
+                    const identifierExpires = new Date();
+                    identifierExpires.setTime(identifierExpires.getTime() + (60 * 24 * 30 * 1000));
+                    document.cookie = `rekber_user_identifier=${userIdentifier};` +
+                        `expires=${identifierExpires.toUTCString()};` +
+                        `path=/;` +
+                        `SameSite=Lax;` +
+                        (window.location.protocol === 'https:' ? 'Secure;' : '');
+
+                    console.log(`Session management:`, {
+                        action,
+                        cookieName,
+                        roomId: result.data.room_number || roomId,
+                        sessionToken: sessionToken.substring(0, 8) + '...',
+                        user: result.data.user_name,
+                        userIdentifier: userIdentifier.substring(0, 8) + '...',
+                        otherActiveSessions: otherSessions.length
+                    });
+
+                    // Verify cookies were set with more robust checking
+                    await new Promise(resolve => setTimeout(resolve, 500));
+
+                    const sessionCookieCheck = document.cookie
+                        .split(';')
+                        .map(c => c.trim())
+                        .find(c => c.startsWith(`${cookieName}=`));
+
+                    const identifierCookieCheck = document.cookie
+                        .split(';')
+                        .map(c => c.trim())
+                        .find(c => c.startsWith('rekber_user_identifier='));
+
+                    console.log('Cookie verification:', {
+                        cookieName,
+                        sessionCookieSet: !!sessionCookieCheck,
+                        identifierCookieSet: !!identifierCookieCheck,
+                        allCookies: document.cookie.split(';').map(c => c.trim().split('=')[0])
+                    });
+
+                    if (!sessionCookieCheck) {
+                        console.error('Failed to set session cookie:', cookieName);
+                        // Try alternative method
+                        try {
+                            const altExpires = new Date();
+                            altExpires.setTime(altExpires.getTime() + (60 * 120 * 1000));
+                            document.cookie = `${cookieName}=${sessionToken}; expires=${altExpires.toUTCString()}; path=/`;
+
+                            // Check again
+                            const altCheck = document.cookie
+                                .split(';')
+                                .map(c => c.trim())
+                                .find(c => c.startsWith(`${cookieName}=`));
+
+                            if (!altCheck) {
+                                setJoinError('Failed to save session. Please check your browser settings and try again.');
+                                return;
+                            }
+                        } catch (e) {
+                            console.error('Alternative cookie setting failed:', e);
+                            setJoinError('Failed to save session. Please try again.');
+                            return;
+                        }
+                    }
+
+                    if (!identifierCookieCheck) {
+                        console.error('Failed to set user identifier cookie');
+                        // This is less critical, continue with session
+                    }
+
+                    // Store session info in localStorage for easy access
+                    const sessionInfo = {
+                        roomId,
+                        roomNumber: result.data.room_number,
+                        role: result.data.role,
+                        cookieName,
+                        userIdentifier,
+                        userName: result.data.user_name,
+                        action,
+                        timestamp: new Date().toISOString()
+                    };
+
+                    // Get existing sessions from localStorage
+                    const existingSessions = JSON.parse(localStorage.getItem('rekber_sessions') || '[]');
+
+                    // Remove any existing session for the same room
+                    const filteredSessions = existingSessions.filter(s => s.roomId !== roomId);
+
+                    // Add new session
+                    filteredSessions.push(sessionInfo);
+
+                    // Store updated sessions (keep only last 10 sessions)
+                    localStorage.setItem('rekber_sessions', JSON.stringify(filteredSessions.slice(-10)));
+                }
+            } else if (!result.success && result.requires_role_switch) {
+                // Handle role switch suggestion
+                const switchRole = window.confirm(
+                    `${result.message}\n\nWould you like to join as ${result.suggested_role} instead?`
+                );
+
+                if (switchRole) {
+                    // Update the selected role and retry
+                    setSelectedRole(result.suggested_role);
+                    setData('role', result.suggested_role);
+                    return; // Let user try again with new role
+                } else {
+                    setJoinError('Unable to join with requested role.');
+                    return;
+                }
+            } else {
+                setJoinError(result.message || 'Failed to join room.');
+                return;
             }
             reset();
             const enterUrl = share_links[selectedRole]?.enter;

@@ -14,7 +14,7 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        $middleware->encryptCookies(except: ['appearance', 'sidebar_state', 'room_session_*']);
+        $middleware->encryptCookies(except: ['appearance', 'sidebar_state', 'room_session_*', 'rekber_session_*', 'rekber_user_identifier']);
 
         $middleware->web(append: [
             HandleAppearance::class,
@@ -26,6 +26,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'gm.auth' => \App\Http\Middleware\GmAuth::class,
             'room.session' => \App\Http\Middleware\RoomSession::class,
             'room.token' => \App\Http\Middleware\ValidateRoomToken::class,
+            'room.multi.session' => \App\Http\Middleware\MultiSessionRoomAuth::class,
             'decrypt.room' => \App\Http\Middleware\DecryptRoomId::class,
         ]);
     })

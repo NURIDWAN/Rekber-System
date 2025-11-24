@@ -1,240 +1,10 @@
-import Pusher from 'pusher-js';
 import { log } from './logger';
 
-// ===== LEGACY PUSHER SUPPORT (BACKWARD COMPATIBILITY) =====
+// Import the global status update function (defined at the bottom of this file)
+// Import the global status update function (defined at the bottom of this file)
+// updateGlobalConnectionStatus is defined at the bottom of this file
 
-// Pusher configuration (explicit host/port to match backend)
-const scheme = import.meta.env.VITE_PUSHER_SCHEME || 'https';
-const port = Number(import.meta.env.VITE_PUSHER_PORT || (scheme === 'https' ? 443 : 80));
-const cluster = import.meta.env.VITE_PUSHER_APP_CLUSTER || 'mt1';
-const host = import.meta.env.VITE_PUSHER_HOST || undefined;
-const pusherKey = import.meta.env.VITE_PUSHER_APP_KEY || 'your-pusher-key';
-
-// Initialize Pusher
-const pusher = new Pusher(pusherKey, {
-  cluster,
-  wsHost: host || `ws-${cluster}.pusher.com`,
-  wsPort: port,
-  wssPort: port,
-  forceTLS: scheme === 'https',
-  enabledTransports: ['ws', 'wss'],
-  disableStats: true,
-});
-
-// Debug state changes to inspect connection lifecycle
-pusher.connection.bind('state_change', (state: any) => {
-  console.info('[Pusher] state change', state.previous, '->', state.current);
-});
-
-// Room event types (legacy)
-export interface RoomMessageEvent {
-  id: number;
-  room_id: number;
-  sender_role: string;
-  sender_name: string;
-  message: string;
-  type: 'text' | 'image' | 'system';
-  created_at: string;
-}
-
-export interface RoomUserStatusEvent {
-  room_id: number;
-  user_id: number;
-  user_name: string;
-  role: string;
-  is_online: boolean;
-  last_seen: string;
-}
-
-export interface RoomActivityEvent {
-  room_id: number;
-  action: string;
-  user_name: string;
-  role: string;
-  description: string;
-  timestamp: string;
-}
-
-export interface RoomStatusChangeEvent {
-  room_id: number;
-  status: string;
-  has_buyer: boolean;
-  has_seller: boolean;
-  available_for_buyer: boolean;
-  available_for_seller: boolean;
-  user_name: string;
-  role: string;
-  action: 'user_joined' | 'user_left' | 'room_updated';
-}
-
-// Legacy Pusher functions
-export const subscribeToRoom = (roomId: number) => {
-  const channelName = `room-${roomId}`;
-  return pusher.subscribe(channelName);
-};
-
-export const unsubscribeFromRoom = (roomId: number) => {
-  const channelName = `room-${roomId}`;
-  pusher.unsubscribe(channelName);
-};
-
-export const listenToMessages = (roomId: number, callback: (message: RoomMessageEvent) => void) => {
-  const channel = pusher.subscribe(`room-${roomId}`);
-  const handler = (msg: RoomMessageEvent) => {
-    console.log('[Pusher] new-message', msg);
-    callback(msg);
-  };
-  channel.bind('new-message', handler);
-  return () => channel.unbind('new-message', handler);
-};
-
-export const listenToUserStatus = (roomId: number, callback: (status: RoomUserStatusEvent) => void) => {
-  const channel = pusher.subscribe(`room-${roomId}`);
-  const handler = (status: RoomUserStatusEvent) => {
-    console.log('[Pusher] user-status-changed', status);
-    callback(status);
-  };
-  channel.bind('user-status-changed', handler);
-  return () => channel.unbind('user-status-changed', handler);
-};
-
-export const listenToActivities = (roomId: number, callback: (activity: RoomActivityEvent) => void) => {
-  const channel = pusher.subscribe(`room-${roomId}`);
-  const handler = (activity: RoomActivityEvent) => {
-    console.log('[Pusher] new-activity', activity);
-    callback(activity);
-  };
-  channel.bind('new-activity', handler);
-  return () => channel.unbind('new-activity', handler);
-};
-
-export const listenToFileUploads = (roomId: number, callback: (file: any) => void) => {
-  const channel = pusher.subscribe(`room-${roomId}`);
-  channel.bind('file-uploaded', callback);
-  return () => channel.unbind('file-uploaded', callback);
-};
-
-export const listenToRoomStatusChanges = (callback: (status: RoomStatusChangeEvent) => void) => {
-  try {
-    const channel = pusher.subscribe('rooms-status');
-    channel.bind('room-status-changed', callback);
-    return () => channel.unbind('room-status-changed', callback);
-  } catch (error) {
-    console.warn('Failed to subscribe to room status changes via Pusher, using fallback:', error);
-
-    // Fallback: Set up periodic polling
-    let intervalId: NodeJS.Timeout | null = null;
-
-    const startPolling = () => {
-      intervalId = setInterval(async () => {
-        try {
-          // Fallback to HTTP polling for room status updates
-          const response = await fetch('/api/rooms/status');
-          if (response.ok) {
-            const updates = await response.json();
-            if (updates && updates.length > 0) {
-              updates.forEach((update: RoomStatusChangeEvent) => {
-                callback(update);
-              });
-            }
-          }
-        } catch (pollError) {
-          console.warn('Fallback polling failed:', pollError);
-        }
-      }, 5000); // Poll every 5 seconds
-    };
-
-    // Start polling immediately
-    startPolling();
-
-    // Return cleanup function
-    return () => {
-      if (intervalId) {
-        clearInterval(intervalId);
-      }
-    };
-  }
-};
-
-export const getConnectionStatus = () => {
-  try {
-    return pusher.connection.state;
-  } catch (error) {
-    console.warn('Failed to get Pusher connection status:', error);
-    return 'disconnected';
-  }
-};
-
-export const onConnectionEstablished = (callback: () => void) => {
-  try {
-    pusher.connection.bind('connected', callback);
-    return () => pusher.connection.unbind('connected', callback);
-  } catch (error) {
-    console.warn('Failed to bind to Pusher connection events:', error);
-    // Return a no-op function as fallback
-    return () => {};
-  }
-};
-
-export const onConnectionError = (callback: (error: any) => void) => {
-  try {
-    pusher.connection.bind('error', callback);
-    return () => pusher.connection.unbind('error', callback);
-  } catch (error) {
-    console.warn('Failed to bind to Pusher error events:', error);
-    // Call the callback immediately with the error
-    callback(error);
-    // Return a no-op function as fallback
-    return () => {};
-  }
-};
-
-export const onConnectionDisconnected = (callback: () => void) => {
-  try {
-    pusher.connection.bind('disconnected', callback);
-    return () => pusher.connection.unbind('disconnected', callback);
-  } catch (error) {
-    console.warn('Failed to bind to Pusher disconnect events:', error);
-    // Return a no-op function as fallback
-    return () => {};
-  }
-};
-
-export const triggerTyping = (roomId: number, userRole: string, userName: string) => {
-  const channel = pusher.channel(`room-${roomId}`);
-  if (channel) {
-    channel.trigger('client-typing', {
-      user_role: userRole,
-      user_name: userName,
-      timestamp: new Date().toISOString(),
-    });
-  }
-};
-
-export const stopTyping = (roomId: number, userRole: string, userName: string) => {
-  const channel = pusher.channel(`room-${roomId}`);
-  if (channel) {
-    channel.trigger('client-stop-typing', {
-      user_role: userRole,
-      user_name: userName,
-      timestamp: new Date().toISOString(),
-    });
-  }
-};
-
-export const listenToTyping = (roomId: number, callback: (data: any) => void) => {
-  const channel = pusher.subscribe(`room-${roomId}`);
-  channel.bind('client-typing', callback);
-  return () => channel.unbind('client-typing', callback);
-};
-
-export const listenToStopTyping = (roomId: number, callback: (data: any) => void) => {
-  const channel = pusher.subscribe(`room-${roomId}`);
-  channel.bind('client-stop-typing', callback);
-  return () => channel.unbind('client-stop-typing', callback);
-};
-
-// ===== NEW ENHANCED WEBSOCKET CLIENT =====
+// ===== ENHANCED WEBSOCKET CLIENT =====
 
 interface WebSocketConfig {
   url: string;
@@ -547,6 +317,9 @@ class WebSocketClient {
     const oldStatus = this.status.status;
     this.status.status = status;
 
+    // Update global status for legacy compatibility
+    updateGlobalConnectionStatus(status);
+
     if (oldStatus !== status) {
       this.emit('statusChange', {
         from: oldStatus,
@@ -722,6 +495,160 @@ class WebSocketClient {
   // Static factory method
   public static create(config: WebSocketConfig): WebSocketClient {
     return new WebSocketClient(config);
+  }
+}
+
+// ===== LEGACY COMPATIBILITY FUNCTIONS =====
+// These functions provide backward compatibility for components that still use the old API
+
+// Global state for legacy compatibility
+let globalConnectionStatus: ConnectionStatus['status'] = 'disconnected';
+let connectionListeners: {
+  connected: Function[];
+  error: Function[];
+  disconnected: Function[];
+} = {
+  connected: [],
+  error: [],
+  disconnected: []
+};
+
+// Legacy connection event handlers
+export function onConnectionEstablished(callback: Function): () => void {
+  connectionListeners.connected.push(callback);
+  return () => {
+    const index = connectionListeners.connected.indexOf(callback);
+    if (index > -1) {
+      connectionListeners.connected.splice(index, 1);
+    }
+  };
+}
+
+export function onConnectionError(callback: Function): () => void {
+  connectionListeners.error.push(callback);
+  return () => {
+    const index = connectionListeners.error.indexOf(callback);
+    if (index > -1) {
+      connectionListeners.error.splice(index, 1);
+    }
+  };
+}
+
+export function onConnectionDisconnected(callback: Function): () => void {
+  connectionListeners.disconnected.push(callback);
+  return () => {
+    const index = connectionListeners.disconnected.indexOf(callback);
+    if (index > -1) {
+      connectionListeners.disconnected.splice(index, 1);
+    }
+  };
+}
+
+export function getConnectionStatus(): string {
+  return globalConnectionStatus;
+}
+
+// Update global connection status (called by WebSocketClient instances)
+export function updateGlobalConnectionStatus(status: ConnectionStatus['status']) {
+  if (globalConnectionStatus !== status) {
+    globalConnectionStatus = status;
+
+    // Notify listeners
+    switch (status) {
+      case 'connected':
+        connectionListeners.connected.forEach(callback => {
+          try {
+            callback();
+          } catch (error) {
+            console.error('Error in connection established callback:', error);
+          }
+        });
+        break;
+      case 'error':
+        connectionListeners.error.forEach(callback => {
+          try {
+            callback();
+          } catch (error) {
+            console.error('Error in connection error callback:', error);
+          }
+        });
+        break;
+      case 'disconnected':
+        connectionListeners.disconnected.forEach(callback => {
+          try {
+            callback();
+          } catch (error) {
+            console.error('Error in connection disconnected callback:', error);
+          }
+        });
+        break;
+    }
+  }
+}
+
+// ===== ADDITIONAL LEGACY COMPATIBILITY FUNCTIONS =====
+// Additional functions needed by components
+
+// Global WebSocket client instance for legacy functions
+let globalWSClient: WebSocketClient | null = null;
+
+export function setGlobalWebSocketClient(client: WebSocketClient) {
+  globalWSClient = client;
+}
+
+// Legacy message listening function
+export function listenToMessages(callback: (message: any) => void): () => void {
+  if (globalWSClient) {
+    globalWSClient.on('message', callback);
+    return () => {
+      globalWSClient?.off('message', callback);
+    };
+  }
+
+  // Return empty function if no client
+  return () => { };
+}
+
+// Legacy user status listening function
+export function listenToUserStatus(callback: (status: any) => void): () => void {
+  if (globalWSClient) {
+    globalWSClient.on('userStatus', callback);
+    return () => {
+      globalWSClient?.off('userStatus', callback);
+    };
+  }
+
+  return () => { };
+}
+
+// Legacy activity listening function
+export function listenToActivities(callback: (activity: any) => void): () => void {
+  if (globalWSClient) {
+    globalWSClient.on('activity', callback);
+    return () => {
+      globalWSClient?.off('activity', callback);
+    };
+  }
+
+  return () => { };
+}
+
+// Legacy file upload listening function
+export function listenToFileUploads(callback: (fileEvent: any) => void): () => void {
+  if (globalWSClient) {
+    globalWSClient.on('file', callback);
+    return () => {
+      globalWSClient?.off('file', callback);
+    };
+  }
+
+  return () => { };
+}
+
+// Legacy room unsubscribe function
+export function unsubscribeFromRoom(roomId: string) {
+  if (globalWSClient) {
+    globalWSClient.sendActivity('leave_room', { room_id: roomId });
   }
 }
 

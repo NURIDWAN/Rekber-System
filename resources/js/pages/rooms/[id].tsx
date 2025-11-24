@@ -26,6 +26,7 @@ import ChatInterface from '@/components/ChatInterface'
 import FileUploadModal from '@/components/FileUploadModal'
 import ActivityTimeline from '@/components/ActivityTimeline'
 import ConnectionStatus from '@/components/ConnectionStatus'
+import transactionAPI, { UploadResponse } from '@/services/transaction-api'
 
 function RoomDetailContent({ room }: { room: any }) {
   const { currentUser, isAuthenticated } = useAuth()
@@ -39,10 +40,13 @@ function RoomDetailContent({ room }: { room: any }) {
   const [showJoinModal, setShowJoinModal] = useState(false)
   const [showUploadModal, setShowUploadModal] = useState(false)
   const [uploadType, setUploadType] = useState<'payment' | 'receipt'>('payment')
+  const [transactionId, setTransactionId] = useState<number | null>(null)
+  const [transactionStatus, setTransactionStatus] = useState<string>('pending_payment')
 
   useEffect(() => {
     if (room) {
       selectRoom(room)
+      loadTransaction(room.id)
     }
   }, [room, selectRoom])
 
@@ -52,24 +56,67 @@ function RoomDetailContent({ room }: { room: any }) {
     setShowJoinModal(false)
   }
 
+  const loadTransaction = async (roomId: number) => {
+    try {
+      // For now, we'll use a simple approach
+      // The backend will create/get the transaction when the file is uploaded
+      // We'll use the room ID as a placeholder since the transaction will be linked to the room
+      const tempTransactionId = roomId // Use room ID as temporary identifier
+
+      setTransactionId(tempTransactionId)
+
+      // Set initial status based on room state
+      setTransactionStatus('pending_payment')
+    } catch (error) {
+      console.error('Failed to load transaction:', error)
+      // Fallback: use room ID as transaction ID
+      setTransactionId(roomId)
+      setTransactionStatus('pending_payment')
+    }
+  }
+
   const handleFileUpload = (file: File, type: 'payment' | 'receipt') => {
-    // API call for file upload would go here
+    // This function is no longer used - we use the new callback interface
     console.log('Uploading file:', file, type)
+    setShowUploadModal(false)
+  }
+
+  const handleUploadSuccess = (response: UploadResponse) => {
+    console.log('Upload successful:', response)
+
+    // Update transaction status if provided
+    if (response.data?.transaction) {
+      setTransactionStatus(response.data.transaction.status)
+      // Update room state if needed
+      if (selectedRoom) {
+        updateRoomState({
+          ...selectedRoom,
+          transactionStatus: response.data.transaction.status
+        })
+      }
+    }
+
     setShowUploadModal(false)
   }
 
   const getTransactionStatusIcon = (status: string) => {
     switch (status) {
-      case 'waiting_payment':
+      case 'pending_payment':
+      case 'awaiting_payment_verification':
         return <Clock className="w-4 h-4" />
-      case 'payment_verified':
-        return <CheckCircle className="w-4 h-4 text-green-600" />
-      case 'shipping':
+      case 'paid':
+      case 'awaiting_shipping_verification':
+        return <CheckCircle className="w-4 h-4 text-blue-600" />
+      case 'shipped':
         return <Truck className="w-4 h-4 text-blue-600" />
+      case 'delivered':
+        return <CheckCircle className="w-4 h-4 text-orange-600" />
       case 'completed':
         return <CheckCircle className="w-4 h-4 text-green-600" />
       case 'disputed':
         return <AlertCircle className="w-4 h-4 text-red-600" />
+      case 'cancelled':
+        return <AlertCircle className="w-4 h-4 text-gray-600" />
       default:
         return <Clock className="w-4 h-4" />
     }
@@ -77,16 +124,24 @@ function RoomDetailContent({ room }: { room: any }) {
 
   const getTransactionStatusColor = (status: string) => {
     switch (status) {
-      case 'waiting_payment':
+      case 'pending_payment':
         return 'bg-yellow-100 text-yellow-800'
-      case 'payment_verified':
-        return 'bg-green-100 text-green-800'
-      case 'shipping':
+      case 'awaiting_payment_verification':
+        return 'bg-orange-100 text-orange-800'
+      case 'paid':
         return 'bg-blue-100 text-blue-800'
+      case 'awaiting_shipping_verification':
+        return 'bg-purple-100 text-purple-800'
+      case 'shipped':
+        return 'bg-indigo-100 text-indigo-800'
+      case 'delivered':
+        return 'bg-cyan-100 text-cyan-800'
       case 'completed':
         return 'bg-green-100 text-green-800'
       case 'disputed':
         return 'bg-red-100 text-red-800'
+      case 'cancelled':
+        return 'bg-gray-100 text-gray-800'
       default:
         return 'bg-gray-100 text-gray-800'
     }
@@ -173,12 +228,12 @@ function RoomDetailContent({ room }: { room: any }) {
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-medium text-gray-700">Current Status</span>
                     <Badge
-                      className={getTransactionStatusColor(selectedRoom.transactionStatus)}
+                      className={getTransactionStatusColor(transactionStatus)}
                       variant="secondary"
                     >
-                      {getTransactionStatusIcon(selectedRoom.transactionStatus)}
+                      {getTransactionStatusIcon(transactionStatus)}
                       <span className="ml-1 capitalize">
-                        {selectedRoom.transactionStatus.replace('_', ' ')}
+                        {transactionStatus.replace('_', ' ')}
                       </span>
                     </Badge>
                   </div>
@@ -186,9 +241,9 @@ function RoomDetailContent({ room }: { room: any }) {
                   <Separator />
 
                   {/* Action buttons based on role and status */}
-                  {isUserInRoom && (
+                  {isUserInRoom && transactionId && (
                     <div className="flex flex-wrap gap-2">
-                      {currentUser?.role === 'buyer' && selectedRoom.transactionStatus === 'waiting_payment' && (
+                      {currentUser?.role === 'buyer' && transactionStatus === 'pending_payment' && (
                         <Button
                           onClick={() => { setUploadType('payment'); setShowUploadModal(true) }}
                           className="flex-1"
@@ -198,7 +253,7 @@ function RoomDetailContent({ room }: { room: any }) {
                         </Button>
                       )}
 
-                      {currentUser?.role === 'seller' && selectedRoom.transactionStatus === 'payment_verified' && (
+                      {currentUser?.role === 'seller' && transactionStatus === 'paid' && (
                         <Button
                           onClick={() => { setUploadType('receipt'); setShowUploadModal(true) }}
                           className="flex-1"
@@ -208,8 +263,22 @@ function RoomDetailContent({ room }: { room: any }) {
                         </Button>
                       )}
 
-                      {currentUser?.role === 'buyer' && selectedRoom.transactionStatus === 'shipping' && (
-                        <Button variant="outline" className="flex-1">
+                      {currentUser?.role === 'buyer' && transactionStatus === 'shipped' && (
+                        <Button
+                          variant="outline"
+                          className="flex-1"
+                          onClick={async () => {
+                            if (!transactionId) return
+                            try {
+                              const response = await transactionAPI.markAsDelivered(transactionId)
+                              if (response.success) {
+                                handleUploadSuccess(response)
+                              }
+                            } catch (error) {
+                              console.error('Failed to confirm delivery:', error)
+                            }
+                          }}
+                        >
                           <CheckCircle className="w-4 h-4 mr-2" />
                           Confirm Receipt
                         </Button>
@@ -322,11 +391,13 @@ function RoomDetailContent({ room }: { room: any }) {
         />
       )}
 
-      {showUploadModal && (
+      {showUploadModal && transactionId && (
         <FileUploadModal
           type={uploadType}
+          transactionId={transactionId}
+          roomId={selectedRoom?.id}
           onClose={() => setShowUploadModal(false)}
-          onSubmit={(file) => handleFileUpload(file, uploadType)}
+          onSuccess={handleUploadSuccess}
         />
       )}
     </div>

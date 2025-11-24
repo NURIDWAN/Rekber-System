@@ -21,11 +21,14 @@ import {
   Package,
   Camera
 } from 'lucide-react'
+import transactionAPI, { UploadResponse } from '@/services/transaction-api'
 
 interface FileUploadModalProps {
   type: 'payment' | 'receipt'
+  transactionId: number
   onClose: () => void
-  onSubmit: (file: File) => void
+  onSuccess: (response: UploadResponse) => void
+  roomId?: number // Optional fallback for creating transaction
 }
 
 interface FileWithPreview extends File {
@@ -34,8 +37,10 @@ interface FileWithPreview extends File {
 
 export default function FileUploadModal({
   type,
+  transactionId,
   onClose,
-  onSubmit
+  onSuccess,
+  roomId
 }: FileUploadModalProps) {
   const [files, setFiles] = useState<FileWithPreview[]>([])
   const [uploadProgress, setUploadProgress] = useState(0)
@@ -49,11 +54,10 @@ export default function FileUploadModal({
         description: 'Share proof of payment for this transaction',
         icon: <CreditCard className="w-5 h-5" />,
         accept: {
-          'image/*': ['.jpeg', '.jpg', '.png', '.gif', '.webp'],
-          'application/pdf': ['.pdf']
+          'image/*': ['.jpeg', '.jpg', '.png', '.gif']
         },
-        maxSize: 10 * 1024 * 1024, // 10MB
-        helpText: 'Accepted formats: JPEG, PNG, GIF, PDF (Max 10MB)'
+        maxSize: 5 * 1024 * 1024, // 5MB (backend limit)
+        helpText: 'Accepted formats: JPEG, PNG, JPG, GIF (Max 5MB)'
       }
     } else {
       return {
@@ -61,11 +65,10 @@ export default function FileUploadModal({
         description: 'Share proof that the item has been shipped',
         icon: <Package className="w-5 h-5" />,
         accept: {
-          'image/*': ['.jpeg', '.jpg', '.png', '.gif', '.webp'],
-          'application/pdf': ['.pdf']
+          'image/*': ['.jpeg', '.jpg', '.png', '.gif']
         },
-        maxSize: 10 * 1024 * 1024, // 10MB
-        helpText: 'Accepted formats: JPEG, PNG, GIF, PDF (Max 10MB)'
+        maxSize: 5 * 1024 * 1024, // 5MB (backend limit)
+        helpText: 'Accepted formats: JPEG, PNG, JPG, GIF (Max 5MB)'
       }
     }
   }
@@ -78,9 +81,9 @@ export default function FileUploadModal({
     if (rejectedFiles.length > 0) {
       const rejectionReason = rejectedFiles[0].errors[0]
       if (rejectionReason.code === 'file-too-large') {
-        setError('File size exceeds 10MB limit')
+        setError('File size exceeds 5MB limit')
       } else if (rejectionReason.code === 'file-invalid-type') {
-        setError('Invalid file type. Please use images or PDF only.')
+        setError('Invalid file type. Please use JPEG, PNG, JPG, or GIF images only.')
       } else {
         setError('File upload failed. Please try again.')
       }
@@ -116,40 +119,56 @@ export default function FileUploadModal({
       return
     }
 
+    if (!transactionId || transactionId <= 0) {
+      setError('Invalid transaction. Please refresh the page and try again.')
+      return
+    }
+
     setIsUploading(true)
     setError(null)
+    setUploadProgress(0)
 
-    // Simulate upload progress
+    // Create progress simulation for file upload
     const progressInterval = setInterval(() => {
       setUploadProgress(prev => {
         if (prev >= 90) {
           clearInterval(progressInterval)
           return 90
         }
-        return prev + 10
+        return prev + Math.random() * 15 // Simulate variable upload speed
       })
-    }, 200)
+    }, 300)
 
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 2000))
+      let response: UploadResponse
 
+      if (type === 'payment') {
+        response = await transactionAPI.uploadPaymentProof(transactionId, files[0])
+      } else {
+        response = await transactionAPI.uploadShippingReceipt(transactionId, files[0])
+      }
+
+      clearInterval(progressInterval)
       setUploadProgress(100)
 
-      setTimeout(() => {
-        onSubmit(files[0])
-        onClose()
-      }, 500)
-    } catch (error) {
-      setError('Upload failed. Please try again.')
+      if (response.success) {
+        setTimeout(() => {
+          onSuccess(response)
+          onClose()
+        }, 1000)
+      } else {
+        setError(response.message || 'Upload failed. Please try again.')
+        setUploadProgress(0)
+      }
+    } catch (error: any) {
       clearInterval(progressInterval)
+      const errorMessage = error.response?.data?.message ||
+                          error.message ||
+                          'Upload failed. Please try again.'
+      setError(errorMessage)
       setUploadProgress(0)
     } finally {
       setIsUploading(false)
-      setTimeout(() => {
-        clearInterval(progressInterval)
-        setUploadProgress(0)
-      }, 3000)
     }
   }
 

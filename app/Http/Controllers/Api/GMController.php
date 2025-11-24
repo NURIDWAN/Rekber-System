@@ -8,20 +8,22 @@ use App\Models\Room;
 use App\Models\RoomUser;
 use App\Models\RoomActivityLog;
 use App\Models\RoomMessage;
+use App\Models\Transaction;
+use App\Models\TransactionFile;
+use App\Events\TransactionUpdated;
+use App\Events\FileVerificationUpdated;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
 
 class GMController extends Controller
 {
-    public function __construct()
-    {
-        $this->middleware('auth:gm')->except(['login']);
-    }
+    // Constructor removed as middleware is handled in routes
 
     /**
      * GM Login
@@ -60,9 +62,13 @@ class GMController extends Controller
      */
     public function dashboard(): JsonResponse
     {
-        $rooms = Room::with(['buyer', 'seller', 'messages' => function ($query) {
+        $rooms = Room::with([
+            'buyer',
+            'seller',
+            'messages' => function ($query) {
                 $query->latest()->limit(1);
-            }])
+            }
+        ])
             ->get()
             ->map(function ($room) {
                 return [
@@ -254,18 +260,18 @@ class GMController extends Controller
         $limit = $request->get('limit', 50);
 
         $logs = $room->activityLogs()
-                    ->recent($limit)
-                    ->get()
-                    ->map(function ($log) {
-                        return [
-                            'id' => $log->id,
-                            'action' => $log->action,
-                            'user_name' => $log->user_name,
-                            'role' => $log->role,
-                            'description' => $log->description,
-                            'timestamp' => $log->timestamp,
-                        ];
-                    });
+            ->recent($limit)
+            ->get()
+            ->map(function ($log) {
+                return [
+                    'id' => $log->id,
+                    'action' => $log->action,
+                    'user_name' => $log->user_name,
+                    'role' => $log->role,
+                    'description' => $log->description,
+                    'timestamp' => $log->timestamp,
+                ];
+            });
 
         return response()->json([
             'success' => true,
@@ -346,5 +352,653 @@ class GMController extends Controller
             'success' => true,
             'message' => 'Logout successful',
         ]);
+    }
+
+    // MVP ESCROW SYSTEM METHODS
+
+    /**
+     * Get transactions requiring GM attention
+     */
+    public function getPendingTransactions(Request $request): JsonResponse
+    {
+        $currentUser = $request->input('current_room_user');
+        $gmUser = null;
+
+        if ($currentUser && isset($currentUser->gm_user) && $currentUser->gm_user) {
+            $gmUser = $currentUser->gm_user;
+        } elseif (Auth::guard('gm')->check()) {
+            $gmUser = Auth::guard('gm')->user();
+        }
+
+        if (!$gmUser) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized - GM access required',
+            ], 403);
+        }
+
+        $status = $request->input('status', 'all');
+        $limit = $request->input('limit', 20);
+
+        try {
+            $query = Transaction::with(['room', 'buyer', 'seller', 'files']);
+
+            if ($status !== 'all') {
+                $query->where('status', $status);
+            } else {
+                $query->requiringGMAttention();
+            }
+
+            $transactions = $query->orderBy('updated_at', 'desc')
+                ->paginate($limit);
+
+            return response()->json([
+                'success' => true,
+                'data' => $transactions,
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error('Get pending transactions failed', [
+                'status' => $status,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to get pending transactions',
+            ], 500);
+        }
+    }
+
+    /**
+     * Get files pending verification
+     */
+    public function getPendingFiles(Request $request): JsonResponse
+    {
+        $currentUser = $request->input('current_room_user');
+        $gmUser = null;
+
+        if ($currentUser && isset($currentUser->gm_user) && $currentUser->gm_user) {
+            $gmUser = $currentUser->gm_user;
+        } elseif (Auth::guard('gm')->check()) {
+            $gmUser = Auth::guard('gm')->user();
+        }
+
+        if (!$gmUser) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized - GM access required',
+            ], 403);
+        }
+
+        $fileType = $request->input('file_type', 'all');
+        $limit = $request->input('limit', 20);
+
+        try {
+            $query = TransactionFile::with(['transaction.room', 'transaction.buyer', 'transaction.seller'])
+                ->where('status', 'pending');
+
+            if ($fileType !== 'all') {
+                $query->where('file_type', $fileType);
+            }
+
+            $files = $query->orderBy('created_at', 'desc')
+                ->paginate($limit);
+
+            return response()->json([
+                'success' => true,
+                'data' => $files,
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error('Get pending files failed', [
+                'file_type' => $fileType,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to get pending files',
+            ], 500);
+        }
+    }
+
+    /**
+     * Verify payment proof
+     */
+    public function verifyPaymentProof(Request $request, TransactionFile $file): JsonResponse
+    {
+        $currentUser = $request->input('current_room_user');
+
+        if (!$currentUser || !isset($currentUser->gm_user) || !$currentUser->gm_user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized - GM access required',
+            ], 403);
+        }
+
+        // Validate file is payment proof and pending
+        if (!$file->isPaymentProof() || !$file->isPending()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'File cannot be verified',
+            ], 400);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'action' => 'required|in:approve,reject',
+            'reason' => 'required_if:action,reject|string|max:1000',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        try {
+            DB::beginTransaction();
+
+            $transaction = $file->transaction;
+            $action = $request->input('action');
+            $gmUserId = $currentUser->id;
+
+            if ($action === 'approve') {
+                // Verify the file
+                $file->markAsVerified($gmUserId);
+
+                // Verify the payment
+                $success = $transaction->verifyPayment($gmUserId);
+
+                if ($success) {
+                    // Create activity log
+                    \App\Models\RoomActivityLog::create([
+                        'room_id' => $transaction->room_id,
+                        'action' => 'payment_verified',
+                        'user_name' => $currentUser->name,
+                        'role' => 'gm',
+                        'description' => 'Payment proof verified by GM',
+                        'timestamp' => now(),
+                    ]);
+
+                    DB::commit();
+
+                    // Broadcast events
+                    broadcast(new FileVerificationUpdated($file, 'approved'));
+                    broadcast(new TransactionUpdated($transaction, 'payment_verified', [
+                        'gm_name' => $currentUser->name,
+                        'file_id' => $file->id,
+                    ]));
+
+                    return response()->json([
+                        'success' => true,
+                        'message' => 'Payment proof verified successfully',
+                        'data' => [
+                            'transaction' => [
+                                'status' => $transaction->status,
+                                'progress' => $transaction->getProgressPercentage(),
+                                'current_action' => $transaction->getCurrentAction(),
+                            ],
+                            'file' => [
+                                'status' => $file->status,
+                                'verified_at' => $file->verified_at,
+                            ],
+                        ],
+                    ]);
+                } else {
+                    throw new \Exception('Failed to verify payment');
+                }
+            } else {
+                // Reject the file
+                $reason = $request->input('reason');
+                $file->markAsRejected($gmUserId, $reason);
+
+                // Reject the payment
+                $success = $transaction->rejectPayment($gmUserId, $reason);
+
+                if ($success) {
+                    // Create activity log
+                    \App\Models\RoomActivityLog::create([
+                        'room_id' => $transaction->room_id,
+                        'action' => 'payment_rejected',
+                        'user_name' => $currentUser->name,
+                        'role' => 'gm',
+                        'description' => 'Payment proof rejected: ' . $reason,
+                        'timestamp' => now(),
+                    ]);
+
+                    DB::commit();
+
+                    // Broadcast events
+                    broadcast(new FileVerificationUpdated($file, 'rejected', $reason));
+                    broadcast(new TransactionUpdated($transaction, 'payment_rejected', [
+                        'gm_name' => $currentUser->name,
+                        'file_id' => $file->id,
+                        'rejection_reason' => $reason,
+                    ]));
+
+                    return response()->json([
+                        'success' => true,
+                        'message' => 'Payment proof rejected successfully',
+                        'data' => [
+                            'transaction' => [
+                                'status' => $transaction->status,
+                                'progress' => $transaction->getProgressPercentage(),
+                                'current_action' => $transaction->getCurrentAction(),
+                                'payment_rejection_reason' => $transaction->payment_rejection_reason,
+                            ],
+                            'file' => [
+                                'status' => $file->status,
+                                'verified_at' => $file->verified_at,
+                                'rejection_reason' => $file->rejection_reason,
+                            ],
+                        ],
+                    ]);
+                } else {
+                    throw new \Exception('Failed to reject payment');
+                }
+            }
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            \Log::error('Payment proof verification failed', [
+                'file_id' => $file->id,
+                'action' => $action,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to process payment proof verification',
+            ], 500);
+        }
+    }
+
+    /**
+     * Verify shipping receipt
+     */
+    public function verifyShippingReceipt(Request $request, TransactionFile $file): JsonResponse
+    {
+        $currentUser = $request->input('current_room_user');
+
+        if (!$currentUser || !isset($currentUser->gm_user) || !$currentUser->gm_user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized - GM access required',
+            ], 403);
+        }
+
+        // Validate file is shipping receipt and pending
+        if (!$file->isShippingReceipt() || !$file->isPending()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'File cannot be verified',
+            ], 400);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'action' => 'required|in:approve,reject',
+            'reason' => 'required_if:action,reject|string|max:1000',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        try {
+            DB::beginTransaction();
+
+            $transaction = $file->transaction;
+            $action = $request->input('action');
+            $gmUserId = $currentUser->id;
+
+            if ($action === 'approve') {
+                // Verify the file
+                $file->markAsVerified($gmUserId);
+
+                // Verify the shipping
+                $success = $transaction->verifyShipping($gmUserId);
+
+                if ($success) {
+                    // Create activity log
+                    \App\Models\RoomActivityLog::create([
+                        'room_id' => $transaction->room_id,
+                        'action' => 'shipping_verified',
+                        'user_name' => $currentUser->name,
+                        'role' => 'gm',
+                        'description' => 'Shipping receipt verified by GM',
+                        'timestamp' => now(),
+                    ]);
+
+                    DB::commit();
+
+                    // Broadcast events
+                    broadcast(new FileVerificationUpdated($file, 'approved'));
+                    broadcast(new TransactionUpdated($transaction, 'shipping_verified', [
+                        'gm_name' => $currentUser->name,
+                        'file_id' => $file->id,
+                    ]));
+
+                    return response()->json([
+                        'success' => true,
+                        'message' => 'Shipping receipt verified successfully',
+                        'data' => [
+                            'transaction' => [
+                                'status' => $transaction->status,
+                                'progress' => $transaction->getProgressPercentage(),
+                                'current_action' => $transaction->getCurrentAction(),
+                            ],
+                            'file' => [
+                                'status' => $file->status,
+                                'verified_at' => $file->verified_at,
+                            ],
+                        ],
+                    ]);
+                } else {
+                    throw new \Exception('Failed to verify shipping');
+                }
+            } else {
+                // Reject the file
+                $reason = $request->input('reason');
+                $file->markAsRejected($gmUserId, $reason);
+
+                // Reject the shipping
+                $success = $transaction->rejectShipping($gmUserId, $reason);
+
+                if ($success) {
+                    // Create activity log
+                    \App\Models\RoomActivityLog::create([
+                        'room_id' => $transaction->room_id,
+                        'action' => 'shipping_rejected',
+                        'user_name' => $currentUser->name,
+                        'role' => 'gm',
+                        'description' => 'Shipping receipt rejected: ' . $reason,
+                        'timestamp' => now(),
+                    ]);
+
+                    DB::commit();
+
+                    // Broadcast events
+                    broadcast(new FileVerificationUpdated($file, 'rejected', $reason));
+                    broadcast(new TransactionUpdated($transaction, 'shipping_rejected', [
+                        'gm_name' => $currentUser->name,
+                        'file_id' => $file->id,
+                        'rejection_reason' => $reason,
+                    ]));
+
+                    return response()->json([
+                        'success' => true,
+                        'message' => 'Shipping receipt rejected successfully',
+                        'data' => [
+                            'transaction' => [
+                                'status' => $transaction->status,
+                                'progress' => $transaction->getProgressPercentage(),
+                                'current_action' => $transaction->getCurrentAction(),
+                                'shipping_rejection_reason' => $transaction->shipping_rejection_reason,
+                            ],
+                            'file' => [
+                                'status' => $file->status,
+                                'verified_at' => $file->verified_at,
+                                'rejection_reason' => $file->rejection_reason,
+                            ],
+                        ],
+                    ]);
+                } else {
+                    throw new \Exception('Failed to reject shipping');
+                }
+            }
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            \Log::error('Shipping receipt verification failed', [
+                'file_id' => $file->id,
+                'action' => $action,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to process shipping receipt verification',
+            ], 500);
+        }
+    }
+
+    /**
+     * Release funds to complete transaction
+     */
+    public function releaseFunds(Request $request, Transaction $transaction): JsonResponse
+    {
+        $currentUser = $request->input('current_room_user');
+
+        if (!$currentUser || !isset($currentUser->gm_user) || !$currentUser->gm_user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized - GM access required',
+            ], 403);
+        }
+
+        // Validate transaction is ready for fund release
+        if ($transaction->status !== 'delivered') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Transaction is not ready for fund release',
+            ], 400);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'notes' => 'nullable|string|max:2000',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        try {
+            DB::beginTransaction();
+
+            $gmUserId = $currentUser->id;
+            $notes = $request->input('notes', '');
+
+            // Release funds
+            $success = $transaction->releaseFunds($gmUserId);
+
+            if ($success) {
+                // Update GM notes if provided
+                if ($notes) {
+                    $transaction->update([
+                        'gm_notes' => $transaction->gm_notes . "\n\n[Fund Release] " . $notes,
+                    ]);
+                }
+
+                // Create activity log
+                \App\Models\RoomActivityLog::create([
+                    'room_id' => $transaction->room_id,
+                    'action' => 'funds_released',
+                    'user_name' => $currentUser->name,
+                    'role' => 'gm',
+                    'description' => 'Funds released and transaction completed',
+                    'timestamp' => now(),
+                ]);
+
+                DB::commit();
+
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Funds released successfully - Transaction completed',
+                    'data' => [
+                        'transaction' => [
+                            'status' => $transaction->status,
+                            'progress' => $transaction->getProgressPercentage(),
+                            'completed_at' => $transaction->completed_at,
+                            'funds_released_at' => $transaction->funds_released_at,
+                        ],
+                        'room' => [
+                            'status' => $transaction->room->status,
+                        ],
+                    ],
+                ]);
+            } else {
+                throw new \Exception('Failed to release funds');
+            }
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            \Log::error('Fund release failed', [
+                'transaction_id' => $transaction->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to release funds',
+            ], 500);
+        }
+    }
+
+    /**
+     * Get transaction details for GM
+     */
+    public function getTransactionDetails(Transaction $transaction): JsonResponse
+    {
+        $currentUser = request('current_room_user');
+
+        if (!$currentUser || !isset($currentUser->gm_user) || !$currentUser->gm_user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized - GM access required',
+            ], 403);
+        }
+
+        try {
+            $transaction->load([
+                'room',
+                'buyer',
+                'seller',
+                'files' => function ($query) {
+                    $query->with('verifier');
+                },
+                'paymentVerifier',
+                'shippingVerifier',
+                'fundsReleaser'
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $transaction,
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error('Get transaction details failed', [
+                'transaction_id' => $transaction->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to get transaction details',
+            ], 500);
+        }
+    }
+
+    /**
+     * Get file details for GM verification
+     */
+    public function getFileDetails(TransactionFile $file): JsonResponse
+    {
+        $currentUser = request('current_room_user');
+
+        if (!$currentUser || !isset($currentUser->gm_user) || !$currentUser->gm_user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized - GM access required',
+            ], 403);
+        }
+
+        try {
+            $file->load([
+                'transaction.room',
+                'transaction.buyer',
+                'transaction.seller',
+                'verifier'
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $file,
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error('Get file details failed', [
+                'file_id' => $file->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to get file details',
+            ], 500);
+        }
+    }
+
+    /**
+     * Update GM notes for transaction
+     */
+    public function updateNotes(Request $request, Transaction $transaction): JsonResponse
+    {
+        $currentUser = $request->input('current_room_user');
+
+        if (!$currentUser || !isset($currentUser->gm_user) || !$currentUser->gm_user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized - GM access required',
+            ], 403);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'notes' => 'required|string|max:5000',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        try {
+            $transaction->update([
+                'gm_notes' => $request->input('notes'),
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Notes updated successfully',
+                'data' => [
+                    'gm_notes' => $transaction->gm_notes,
+                ],
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error('Update notes failed', [
+                'transaction_id' => $transaction->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to update notes',
+            ], 500);
+        }
     }
 }

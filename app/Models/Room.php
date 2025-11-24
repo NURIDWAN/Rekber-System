@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Room extends Model
 {
@@ -71,17 +72,25 @@ class Room extends Model
 
     public function isAvailableForSeller(): bool
     {
-        return $this->status === 'in_use' &&
-               $this->buyer()->exists() &&
-               !$this->seller()->exists();
+        return $this->hasBuyer() && !$this->hasSeller();
     }
 
     public function hasBuyer(): bool
     {
-        return $this->buyer()->exists();
+        return $this->buyer()->where('is_online', true)->exists();
     }
 
     public function hasSeller(): bool
+    {
+        return $this->seller()->where('is_online', true)->exists();
+    }
+
+    public function hasAnyBuyer(): bool
+    {
+        return $this->buyer()->exists();
+    }
+
+    public function hasAnySeller(): bool
     {
         return $this->seller()->exists();
     }
@@ -89,5 +98,69 @@ class Room extends Model
     public function isFull(): bool
     {
         return $this->hasBuyer() && $this->hasSeller();
+    }
+
+  
+    /**
+     * Get the active transaction for this room.
+     */
+    public function activeTransaction()
+    {
+        return $this->hasOne(Transaction::class)->whereIn('status', [
+            'pending_payment',
+            'awaiting_payment_verification',
+            'paid',
+            'awaiting_shipping_verification',
+            'shipped',
+            'delivered'
+        ])->latest();
+    }
+
+    /**
+     * Get the latest transaction for this room.
+     */
+    public function latestTransaction()
+    {
+        return $this->hasOne(Transaction::class)->latest();
+    }
+
+    /**
+     * Check if room has any transaction
+     */
+    public function hasTransaction(): bool
+    {
+        return $this->transactions()->exists();
+    }
+
+    /**
+     * Check if room has active transaction
+     */
+    public function hasActiveTransaction(): bool
+    {
+        return $this->activeTransaction()->exists();
+    }
+
+    /**
+     * Get transaction files for this room
+     */
+    public function transactionFiles()
+    {
+        return $this->hasMany(TransactionFile::class);
+    }
+
+    /**
+     * Get payment proof files for this room
+     */
+    public function paymentProofFiles()
+    {
+        return $this->transactionFiles()->where('file_type', 'payment_proof');
+    }
+
+    /**
+     * Get shipping receipt files for this room
+     */
+    public function shippingReceiptFiles()
+    {
+        return $this->transactionFiles()->where('file_type', 'shipping_receipt');
     }
 }

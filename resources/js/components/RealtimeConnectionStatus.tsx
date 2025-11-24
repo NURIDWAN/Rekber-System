@@ -1,13 +1,13 @@
 import { useState, useEffect } from 'react';
 import { cn } from '@/lib/utils';
 import { Wifi, WifiOff, AlertCircle, Loader2, RefreshCw } from 'lucide-react';
-import {
+import WebSocketClient, {
+  ConnectionStatus as WSConnectionStatus,
   getConnectionStatus,
   onConnectionEstablished,
   onConnectionError,
   onConnectionDisconnected,
 } from '@/lib/websocket';
-import WebSocketClient, { ConnectionStatus as WSConnectionStatus } from '@/lib/websocket';
 import { logger } from '@/lib/logger';
 
 type ConnectionStatusType = 'connected' | 'connecting' | 'disconnected' | 'error' | 'reconnecting';
