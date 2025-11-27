@@ -29,6 +29,7 @@ import {
 } from 'lucide-react'
 import { router } from '@inertiajs/react'
 import transactionAPI, { TransactionDetails, TransactionFile } from '@/services/transaction-api'
+import { showErrorNotification } from '@/utils/notifications'
 
 interface Transaction {
   id: number
@@ -144,14 +145,20 @@ export default function TransactionVerificationDetail({ transaction, activities 
 
   const handleVerifyFile = async (file: TransactionFile, action: 'approve' | 'reject') => {
     if (action === 'reject' && !rejectReason.trim()) {
-      alert('Harap masukkan alasan penolakan')
+      showErrorNotification('Harap masukkan alasan penolakan', { title: 'Validasi Gagal' })
       return
     }
 
     setIsLoading(true)
     try {
-      const endpoint = file.file_type === 'payment_proof' ? 'verify-payment' : 'verify-shipping'
-      await transactionAPI.verifyPaymentProof(file.id, action, action === 'reject' ? rejectReason : undefined)
+      // Use the correct API method based on file type
+      if (file.file_type === 'payment_proof') {
+        await transactionAPI.verifyPaymentProof(file.id, action, action === 'reject' ? rejectReason : undefined)
+      } else if (file.file_type === 'shipping_receipt') {
+        await transactionAPI.verifyShippingReceipt(file.id, action, action === 'reject' ? rejectReason : undefined)
+      } else {
+        throw new Error(`Unknown file type: ${file.file_type}`)
+      }
 
       // Refresh page data
       router.reload({
@@ -164,7 +171,7 @@ export default function TransactionVerificationDetail({ transaction, activities 
       })
     } catch (error) {
       console.error('Verification failed:', error)
-      alert('Verifikasi gagal. Silakan coba lagi.')
+      // Error notification is now handled by the API service
     } finally {
       setIsLoading(false)
     }

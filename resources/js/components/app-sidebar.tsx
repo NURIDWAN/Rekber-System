@@ -13,7 +13,8 @@ import {
 import { dashboard } from '@/routes';
 import { type NavItem } from '@/types';
 import { Link } from '@inertiajs/react';
-import { BookOpen, Folder, LayoutGrid } from 'lucide-react';
+import { BookOpen, Folder, LayoutGrid, CreditCard, MessageCircle } from 'lucide-react';
+import { usePage } from '@inertiajs/react';
 import AppLogo from './app-logo';
 
 const mainNavItems: NavItem[] = [
@@ -21,6 +22,24 @@ const mainNavItems: NavItem[] = [
         title: 'Dashboard',
         href: dashboard(),
         icon: LayoutGrid,
+    },
+];
+
+const adminNavItems: NavItem[] = [
+    {
+        title: 'Overview',
+        href: '/dashboard',
+        icon: LayoutGrid,
+    },
+    {
+        title: 'Transactions',
+        href: '/gm/transactions',
+        icon: CreditCard,
+    },
+    {
+        title: 'Rooms',
+        href: '/rooms',
+        icon: MessageCircle,
     },
 ];
 
@@ -38,6 +57,9 @@ const footerNavItems: NavItem[] = [
 ];
 
 export function AppSidebar() {
+    const { auth } = usePage().props as any;
+    const isGm = auth?.user?.role === 'gm';
+
     return (
         <Sidebar collapsible="icon" variant="inset">
             <SidebarHeader>
@@ -53,7 +75,7 @@ export function AppSidebar() {
             </SidebarHeader>
 
             <SidebarContent>
-                <NavMain items={mainNavItems} />
+                <NavMain items={isGm ? adminNavItems : mainNavItems} />
             </SidebarContent>
 
             <SidebarFooter>

@@ -143,11 +143,11 @@ class MultiSessionManager
     private function isRoleAvailable(\App\Models\Room $room, string $role): bool
     {
         if ($role === 'buyer') {
-            // Buyer can join if room is free OR no active buyer exists
-            return $room->status === 'free' || !$room->hasBuyer();
+            // Buyer can join if room is free OR no buyer exists (online or offline)
+            return $room->status === 'free' || !$room->hasAnyBuyer();
         } elseif ($role === 'seller') {
-            // Seller can join if room has an active buyer but no active seller
-            return $room->hasBuyer() && !$room->hasSeller();
+            // Seller can join if room has a buyer (online or offline) but no seller (online or offline)
+            return $room->hasAnyBuyer() && !$room->hasAnySeller();
         }
 
         return false;
@@ -195,35 +195,33 @@ class MultiSessionManager
                         ->first();
 
                     if ($roomUser && $roomUser->user_identifier) {
-                        // Set persistent cookie for future requests
-                        setcookie(
-                            'rekber_user_identifier',
-                            $roomUser->user_identifier,
-                            time() + (60 * 24 * 30), // 30 days
-                            '/',
-                            '',
-                            false,
-                            true
-                        );
                         return $roomUser->user_identifier;
                     }
                 }
             }
         }
 
-        // Generate new identifier if none found
-        $newIdentifier = $this->generateUserIdentifier();
-        setcookie(
-            'rekber_user_identifier',
-            $newIdentifier,
-            time() + (60 * 24 * 30), // 30 days
-            '/',
-            '',
-            false,
-            true
-        );
+        return null;
+    }
 
-        return $newIdentifier;
+    /**
+     * Ensure user has an identifier, generating one if needed
+     * Returns array with identifier and whether it's new
+     */
+    public function ensureUserIdentifier(\Illuminate\Http\Request $request): array
+    {
+        $identifier = $this->getUserIdentifierFromCookie();
+        $isNew = false;
+
+        if (!$identifier) {
+            $identifier = $this->generateUserIdentifier();
+            $isNew = true;
+        }
+
+        return [
+            'identifier' => $identifier,
+            'is_new' => $isNew
+        ];
     }
 
     /**

@@ -64,7 +64,9 @@ class MultiSessionRoomAuth
         }
 
         // Try to find active session with multiple fallback methods
-        $roomUser = $this->findRoomUserWithFallback($roomId, $userIdentifier, $request);
+        $result = $this->findRoomUserWithFallback($roomId, $userIdentifier, $request);
+        $roomUser = $result['roomUser'];
+        $cookiesToSet = $result['cookies'];
 
         if (!$roomUser) {
             \Log::info('No valid session found', [
@@ -78,8 +80,8 @@ class MultiSessionRoomAuth
             $roomUrlService = app(\App\Services\RoomUrlService::class);
             $encryptedRoomId = $roomUrlService->encryptRoomId($roomId);
 
-            // Check if this is an AJAX request
-            if ($request->ajax() || $request->wantsJson()) {
+            // Check if this is an AJAX request (but not Inertia)
+            if (($request->ajax() && !$request->header('X-Inertia')) || $request->wantsJson()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'No active session found for this room',
@@ -114,15 +116,26 @@ class MultiSessionRoomAuth
             'session_token' => substr($roomUser->session_token, 0, 8) . '...'
         ]);
 
-        return $next($request);
+        $response = $next($request);
+
+        // Attach any new cookies (e.g. from migration)
+        foreach ($cookiesToSet as $cookie) {
+            if ($response instanceof Response) {
+                $response->headers->setCookie($cookie);
+            }
+        }
+
+        return $response;
     }
 
     /**
      * Find room user with multiple fallback methods
+     * Returns array ['roomUser' => ?RoomUser, 'cookies' => array]
      */
-    private function findRoomUserWithFallback(int $roomId, string $userIdentifier, Request $request): ?RoomUser
+    private function findRoomUserWithFallback(int $roomId, string $userIdentifier, Request $request): array
     {
         $multiSessionManager = app(MultiSessionManager::class);
+        $cookiesToSet = [];
 
         // Method 1: Try user identifier based lookup (most reliable)
         $roomUser = RoomUser::where('room_id', $roomId)
@@ -131,7 +144,7 @@ class MultiSessionRoomAuth
             ->first();
 
         if ($roomUser && $this->validateSessionToken($roomUser->session_token, $request)) {
-            return $roomUser;
+            return ['roomUser' => $roomUser, 'cookies' => []];
         }
 
         // Method 2: Try legacy cookie-based lookup
@@ -145,30 +158,20 @@ class MultiSessionRoomAuth
                 // Migrate to multi-session
                 $migratedSession = $multiSessionManager->migrateLegacySession($legacyToken);
                 if ($migratedSession) {
-                    // Set new cookie
-                    $cookieName = $migratedSession['cookie_name'];
-                    setcookie(
-                        $cookieName,
+                    // Prepare new cookies
+                    $cookiesToSet[] = cookie(
+                        $migratedSession['cookie_name'],
                         $migratedSession['session_token'],
-                        time() + (60 * 120), // 2 hours
-                        '/',
-                        '',
-                        false,
-                        true
+                        120 // 2 hours
                     );
 
-                    // Set user identifier cookie
-                    setcookie(
+                    $cookiesToSet[] = cookie(
                         'rekber_user_identifier',
                         $migratedSession['user_identifier'],
-                        time() + (60 * 24 * 30), // 30 days
-                        '/',
-                        '',
-                        false,
-                        true
+                        60 * 24 * 30 // 30 days
                     );
 
-                    return RoomUser::find($legacyRoomUser->id);
+                    return ['roomUser' => RoomUser::find($legacyRoomUser->id), 'cookies' => $cookiesToSet];
                 }
             }
         }
@@ -190,7 +193,7 @@ class MultiSessionRoomAuth
                     if (!$roomUser->user_identifier) {
                         $roomUser->update(['user_identifier' => $userIdentifier]);
                     }
-                    return $roomUser;
+                    return ['roomUser' => $roomUser, 'cookies' => []];
                 }
             }
         }
@@ -210,24 +213,20 @@ class MultiSessionRoomAuth
 
                 // Set new format cookie
                 $newCookieName = $multiSessionManager->generateCookieName($roomId, $roomUser->role, $userIdentifier);
-                setcookie(
+                $cookiesToSet[] = cookie(
                     $newCookieName,
                     $oldToken,
-                    time() + (60 * 120), // 2 hours
-                    '/',
-                    '',
-                    false,
-                    true
+                    120 // 2 hours
                 );
 
                 // Clear old cookie
-                setcookie($oldCookieName, '', -1, '/');
+                $cookiesToSet[] = cookie($oldCookieName, '', -1);
 
-                return $roomUser;
+                return ['roomUser' => $roomUser, 'cookies' => $cookiesToSet];
             }
         }
 
-        return null;
+        return ['roomUser' => null, 'cookies' => []];
     }
 
     /**

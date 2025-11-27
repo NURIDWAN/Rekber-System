@@ -97,9 +97,9 @@ class RoomJoinController extends Controller
                     case 'reconnect':
                         // User already has session - just reactivate it
                         $roomUser = RoomUser::where('room_id', $roomId)
-                                           ->where('user_identifier', $userIdentifier)
-                                           ->where('role', $requestedRole)
-                                           ->first();
+                            ->where('user_identifier', $userIdentifier)
+                            ->where('role', $requestedRole)
+                            ->first();
 
                         if ($roomUser) {
                             $roomUser->update([
@@ -124,9 +124,9 @@ class RoomJoinController extends Controller
                     case 'switch_role':
                         // User wants to switch roles in the same room
                         $existingSession = RoomUser::where('room_id', $roomId)
-                                                 ->where('user_identifier', $userIdentifier)
-                                                 ->where('is_online', true)
-                                                 ->first();
+                            ->where('user_identifier', $userIdentifier)
+                            ->where('is_online', true)
+                            ->first();
 
                         if ($existingSession) {
                             $roomUser = $existingSession->switchRole($requestedRole);
@@ -147,6 +147,10 @@ class RoomJoinController extends Controller
                     case 'join':
                     default:
                         // New user joining
+                        // Use ensureUserIdentifier to get consistent identifier
+                        $identifierResult = $multiSessionManager->ensureUserIdentifier($request);
+                        $userIdentifier = $identifierResult['identifier'];
+
                         $sessionToken = $multiSessionManager->generateSessionToken($roomId, $requestedRole, $userIdentifier);
                         $deviceFingerprint = RoomUser::generateDeviceFingerprint();
 
@@ -207,7 +211,7 @@ class RoomJoinController extends Controller
                 // Get user's other active sessions
                 $otherSessions = $multiSessionManager->getUserSessions($userIdentifier);
 
-                return response()->json([
+                $response = response()->json([
                     'success' => true,
                     'message' => $this->getSuccessMessage($action, $actualRole),
                     'data' => [
@@ -222,6 +226,15 @@ class RoomJoinController extends Controller
                         'other_active_sessions' => $otherSessions,
                     ]
                 ]);
+
+                // Attach session cookie
+                $response->withCookie(cookie($cookieName, $roomUser->session_token, 120));
+
+                // Attach user identifier cookie if needed
+                // We always attach it to ensure it's refreshed/set
+                $response->withCookie(cookie('rekber_user_identifier', $userIdentifier, 60 * 24 * 30));
+
+                return $response;
 
             } catch (\Exception $e) {
                 DB::rollBack();

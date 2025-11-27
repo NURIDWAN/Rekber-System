@@ -6,6 +6,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { initializeTheme } from './hooks/use-appearance';
 import { MultiSessionProvider } from './contexts/MultiSessionContext';
+import { Toaster } from './components/ui/toaster';
 
 const appName = import.meta.env.VITE_APP_NAME || 'Laravel';
 
@@ -23,6 +24,7 @@ createInertiaApp({
             <StrictMode>
                 <MultiSessionProvider>
                     <App {...props} />
+                    <Toaster />
                 </MultiSessionProvider>
             </StrictMode>,
         );

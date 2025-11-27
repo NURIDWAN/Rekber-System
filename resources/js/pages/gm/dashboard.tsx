@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react'
 import { Head, Link } from '@inertiajs/react'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Progress } from '@/components/ui/progress'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { useAuth } from '@/contexts/AuthContext'
@@ -14,6 +14,8 @@ import RekberProvider from '@/components/RekberProvider'
 import { ShareUrlModal } from '@/components/ShareUrlModal'
 import { getRoomUrl } from '@/lib/roomUrlUtils'
 import transactionAPI, { TransactionDetails, TransactionFile } from '@/services/transaction-api'
+import AppLayout from '@/layouts/app-layout'
+import { cn } from '@/lib/utils'
 import {
   Users,
   MessageCircle,
@@ -35,7 +37,10 @@ import {
   CheckSquare,
   XSquare,
   AlertCircle,
-  Loader2
+  Loader2,
+  ArrowRight,
+  Search,
+  Filter
 } from 'lucide-react'
 import { Room, RoomUser } from '@/types'
 
@@ -76,6 +81,13 @@ interface PendingTransaction {
   files: TransactionFile[]
 }
 
+const breadcrumbs = [
+  {
+    title: 'Admin Dashboard',
+    href: '/dashboard',
+  },
+];
+
 function GMDashboardContent({ rooms, stats }: GMDashboardProps) {
   const { currentUser } = useAuth()
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null)
@@ -97,8 +109,8 @@ function GMDashboardContent({ rooms, stats }: GMDashboardProps) {
   const calculatedStats = {
     totalRooms: stats?.totalRooms || rooms.length,
     activeTransactions: stats?.activeTransactions || rooms.filter(r => r.status === 'in_use').length,
-    completedTransactions: stats?.completedTransactions || 0, // This would come from backend
-    pendingVerifications: stats?.pendingVerifications || 0, // This would come from backend
+    completedTransactions: stats?.completedTransactions || 0,
+    pendingVerifications: stats?.pendingVerifications || 0,
   }
 
   useEffect(() => {
@@ -194,290 +206,334 @@ function GMDashboardContent({ rooms, stats }: GMDashboardProps) {
   const getRoomStatusColor = (status: string) => {
     switch (status) {
       case 'free':
-        return 'bg-green-100 text-green-800 border-green-200'
+        return 'bg-emerald-100 text-emerald-700 border-emerald-200'
       case 'in_use':
-        return 'bg-orange-100 text-orange-800 border-orange-200'
+        return 'bg-amber-100 text-amber-700 border-amber-200'
       default:
-        return 'bg-gray-100 text-gray-800 border-gray-200'
+        return 'bg-slate-100 text-slate-700 border-slate-200'
     }
   }
 
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'free':
-        return <CheckCircle className="w-4 h-4" />
+        return <CheckCircle className="w-3.5 h-3.5" />
       case 'in_use':
-        return <Clock className="w-4 h-4" />
+        return <Clock className="w-3.5 h-3.5" />
       default:
-        return <AlertTriangle className="w-4 h-4" />
-    }
-  }
-
-  const getTransactionStatusIcon = (status: string) => {
-    switch (status) {
-      case 'pending_payment':
-      case 'awaiting_payment_verification':
-        return <CreditCard className="w-4 h-4" />
-      case 'paid':
-      case 'awaiting_shipping_verification':
-        return <Package className="w-4 h-4" />
-      case 'shipped':
-        return <Truck className="w-4 h-4" />
-      case 'delivered':
-        return <CheckCircle className="w-4 h-4" />
-      case 'disputed':
-        return <AlertCircle className="w-4 h-4" />
-      default:
-        return <Clock className="w-4 h-4" />
+        return <AlertTriangle className="w-3.5 h-3.5" />
     }
   }
 
   const getTransactionStatusBadge = (status: string) => {
-    const colors = {
-      'pending_payment': 'bg-yellow-100 text-yellow-800',
-      'awaiting_payment_verification': 'bg-orange-100 text-orange-800',
-      'paid': 'bg-blue-100 text-blue-800',
-      'awaiting_shipping_verification': 'bg-purple-100 text-purple-800',
-      'shipped': 'bg-indigo-100 text-indigo-800',
-      'delivered': 'bg-cyan-100 text-cyan-800',
-      'disputed': 'bg-red-100 text-red-800',
-      'completed': 'bg-green-100 text-green-800'
+    const styles = {
+      'pending_payment': 'bg-amber-100 text-amber-700 border-amber-200',
+      'awaiting_payment_verification': 'bg-orange-100 text-orange-700 border-orange-200',
+      'paid': 'bg-blue-100 text-blue-700 border-blue-200',
+      'awaiting_shipping_verification': 'bg-violet-100 text-violet-700 border-violet-200',
+      'shipped': 'bg-indigo-100 text-indigo-700 border-indigo-200',
+      'delivered': 'bg-cyan-100 text-cyan-700 border-cyan-200',
+      'disputed': 'bg-rose-100 text-rose-700 border-rose-200',
+      'completed': 'bg-emerald-100 text-emerald-700 border-emerald-200'
     }
 
     return (
-      <Badge className={colors[status as keyof typeof colors] || 'bg-gray-100 text-gray-800'}>
-        {getTransactionStatusIcon(status)}
-        <span className="ml-1 capitalize">{status.replace('_', ' ')}</span>
-      </Badge>
-    )
-  }
-
-  const getFileTypeIcon = (fileType: string) => {
-    return fileType === 'payment_proof' ?
-      <CreditCard className="w-4 h-4" /> :
-      <Package className="w-4 h-4" />
-  }
-
-  const getFileTypeBadge = (fileType: string) => {
-    const colors = {
-      'payment_proof': 'bg-blue-100 text-blue-800',
-      'shipping_receipt': 'bg-green-100 text-green-800'
-    }
-
-    return (
-      <Badge className={colors[fileType as keyof typeof colors] || 'bg-gray-100 text-gray-800'}>
-        {getFileTypeIcon(fileType)}
-        <span className="ml-1">{fileType === 'payment_proof' ? 'Payment Proof' : 'Shipping Receipt'}</span>
+      <Badge variant="outline" className={cn("font-medium", styles[status as keyof typeof styles] || 'bg-slate-100 text-slate-700 border-slate-200')}>
+        <span className="capitalize">{status.replace(/_/g, ' ')}</span>
       </Badge>
     )
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <Head title="GM Dashboard - Rekber System" />
+    <div className="min-h-screen bg-slate-50/50">
+      <Head title="Admin Dashboard - Rekber System" />
 
-      {/* Header */}
-      <div className="bg-white border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center space-x-4">
-              <Shield className="w-8 h-8 text-purple-600" />
-              <div>
-                <h1 className="text-xl font-semibold text-gray-900">GM Dashboard</h1>
-                <p className="text-sm text-gray-500">Rekber System Administration</p>
-              </div>
+      {/* Hero Section with Stats */}
+      <div className="relative overflow-hidden bg-slate-900 pb-32 pt-12">
+        <div className="absolute inset-0">
+          <div className="absolute inset-0 bg-gradient-to-br from-violet-600/20 via-slate-900 to-slate-900" />
+        </div>
+        <div className="relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-3xl font-bold tracking-tight text-white">Dashboard Overview</h1>
+              <p className="mt-2 text-slate-400">Welcome back, Administrator. Here's what's happening today.</p>
             </div>
-
-            <div className="flex items-center space-x-3">
-              <Badge
-                variant="outline"
-                className={connectionStatus === 'connected'
-                  ? 'bg-green-50 text-green-800 border-green-200'
-                  : 'bg-red-50 text-red-800 border-red-200'
-                }
-              >
-                {connectionStatus === 'connected' ? (
-                  <>
-                    <div className="w-2 h-2 bg-green-500 rounded-full mr-2"></div>
-                    Connected
-                  </>
-                ) : (
-                  <>
-                    <div className="w-2 h-2 bg-red-500 rounded-full mr-2"></div>
-                    Disconnected
-                  </>
-                )}
+            <div className="flex items-center gap-3">
+              <Badge variant="outline" className={cn(
+                "px-3 py-1 border-slate-700",
+                connectionStatus === 'connected' ? "bg-emerald-500/10 text-emerald-400" : "bg-rose-500/10 text-rose-400"
+              )}>
+                <div className={cn("mr-2 h-2 w-2 rounded-full", connectionStatus === 'connected' ? "bg-emerald-400" : "bg-rose-400")} />
+                {connectionStatus === 'connected' ? 'System Online' : 'System Offline'}
               </Badge>
-
-              <Button variant="outline" size="sm">
-                <Settings className="w-4 h-4 mr-2" />
+              <Button variant="secondary" size="sm" className="gap-2">
+                <Settings className="h-4 w-4" />
                 Settings
               </Button>
-
-              <Link href="/rooms">
-                <Button variant="outline" size="sm">
-                  View All Rooms
-                </Button>
-              </Link>
             </div>
+          </div>
+
+          {/* Main Stats Grid */}
+          <div className="mt-8 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
+            <Card className="border-none bg-white/10 text-white backdrop-blur-sm">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-slate-300">Pending Verifications</p>
+                    <p className="mt-2 text-3xl font-bold">{gmStats?.pending_payment_verification || 0}</p>
+                  </div>
+                  <div className="rounded-lg bg-white/10 p-3">
+                    <CreditCard className="h-6 w-6 text-white" />
+                  </div>
+                </div>
+                <div className="mt-4 flex items-center text-xs text-slate-300">
+                  <span className="text-emerald-400 font-medium flex items-center gap-1">
+                    <Activity className="h-3 w-3" /> +2
+                  </span>
+                  <span className="ml-1.5">since last hour</span>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="border-none bg-white/10 text-white backdrop-blur-sm">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-slate-300">Active Transactions</p>
+                    <p className="mt-2 text-3xl font-bold">{gmStats?.active_transactions || 0}</p>
+                  </div>
+                  <div className="rounded-lg bg-white/10 p-3">
+                    <TrendingUp className="h-6 w-6 text-white" />
+                  </div>
+                </div>
+                <div className="mt-4 flex items-center text-xs text-slate-300">
+                  <span className="text-emerald-400 font-medium flex items-center gap-1">
+                    <ArrowRight className="h-3 w-3" /> Stable
+                  </span>
+                  <span className="ml-1.5">volume today</span>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="border-none bg-white/10 text-white backdrop-blur-sm">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-slate-300">Active Rooms</p>
+                    <p className="mt-2 text-3xl font-bold">{rooms.filter(r => r.status === 'in_use').length}</p>
+                  </div>
+                  <div className="rounded-lg bg-white/10 p-3">
+                    <MessageCircle className="h-6 w-6 text-white" />
+                  </div>
+                </div>
+                <div className="mt-4 flex items-center text-xs text-slate-300">
+                  <span className="text-slate-400 font-medium">
+                    {rooms.length} total rooms
+                  </span>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="border-none bg-white/10 text-white backdrop-blur-sm">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-slate-300">Disputes</p>
+                    <p className="mt-2 text-3xl font-bold">{gmStats?.disputed_transactions || 0}</p>
+                  </div>
+                  <div className="rounded-lg bg-white/10 p-3">
+                    <AlertTriangle className="h-6 w-6 text-white" />
+                  </div>
+                </div>
+                <div className="mt-4 flex items-center text-xs text-slate-300">
+                  {gmStats?.disputed_transactions ? (
+                    <span className="text-rose-400 font-medium flex items-center gap-1">
+                      Action Required
+                    </span>
+                  ) : (
+                    <span className="text-emerald-400 font-medium flex items-center gap-1">
+                      All clear
+                    </span>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
           </div>
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-
-        {/* Tabs Navigation */}
+      {/* Main Content Area */}
+      <div className="relative mx-auto -mt-24 max-w-7xl px-4 sm:px-6 lg:px-8 pb-12">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="transactions">Transactions</TabsTrigger>
-            <TabsTrigger value="rooms">Room Management</TabsTrigger>
-          </TabsList>
+          <div className="flex items-center justify-between">
+            <TabsList className="grid w-full max-w-md grid-cols-3 bg-white/10 p-1 text-white backdrop-blur-md">
+              <TabsTrigger value="overview" className="data-[state=active]:bg-white data-[state=active]:text-slate-900">Overview</TabsTrigger>
+              <TabsTrigger value="transactions" className="data-[state=active]:bg-white data-[state=active]:text-slate-900">Transactions</TabsTrigger>
+              <TabsTrigger value="rooms" className="data-[state=active]:bg-white data-[state=active]:text-slate-900">Rooms</TabsTrigger>
+            </TabsList>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" className="bg-white/90 backdrop-blur hover:bg-white" onClick={loadDashboardData} disabled={isLoading}>
+                <RefreshCw className={cn("mr-2 h-4 w-4", isLoading && "animate-spin")} />
+                Refresh Data
+              </Button>
+            </div>
+          </div>
 
           {/* Overview Tab */}
-          <TabsContent value="overview" className="space-y-6">
-        {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
-          <Card>
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Payment Verification</p>
-                  <p className="text-2xl font-bold text-gray-900">
-                    {gmStats?.pending_payment_verification || 0}
-                  </p>
+          <TabsContent value="overview" className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            {/* Quick Actions */}
+            <Card className="border-slate-200 shadow-sm">
+              <CardHeader>
+                <CardTitle className="text-lg font-medium">Quick Actions</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <Button
+                    onClick={() => setActiveTab('transactions')}
+                    className="h-auto py-4 flex flex-col gap-2 bg-slate-900 hover:bg-slate-800"
+                  >
+                    <CreditCard className="h-6 w-6" />
+                    <span>Verify Payments ({gmStats?.pending_payment_verification || 0})</span>
+                  </Button>
+                  <Button
+                    onClick={() => setActiveTab('transactions')}
+                    variant="outline"
+                    className="h-auto py-4 flex flex-col gap-2 border-slate-200 hover:bg-slate-50 hover:text-slate-900"
+                  >
+                    <Package className="h-6 w-6 text-slate-600" />
+                    <span>Verify Shipping ({gmStats?.pending_shipping_verification || 0})</span>
+                  </Button>
+                  <Button
+                    onClick={() => setActiveTab('transactions')}
+                    variant="outline"
+                    className="h-auto py-4 flex flex-col gap-2 border-slate-200 hover:bg-slate-50 hover:text-slate-900"
+                  >
+                    <TrendingUp className="h-6 w-6 text-slate-600" />
+                    <span>Release Funds ({gmStats?.pending_fund_release || 0})</span>
+                  </Button>
+                  <Button
+                    onClick={() => setActiveTab('transactions')}
+                    variant="outline"
+                    className={cn(
+                      "h-auto py-4 flex flex-col gap-2 border-slate-200 hover:bg-slate-50 hover:text-slate-900",
+                      gmStats?.disputed_transactions! > 0 && "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 hover:text-rose-800"
+                    )}
+                  >
+                    <AlertCircle className={cn("h-6 w-6", gmStats?.disputed_transactions! > 0 ? "text-rose-600" : "text-slate-600")} />
+                    <span>Handle Disputes ({gmStats?.disputed_transactions || 0})</span>
+                  </Button>
                 </div>
-                <div className="p-3 bg-orange-100 rounded-lg">
-                  <CreditCard className="w-6 h-6 text-orange-600" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
 
-          <Card>
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Shipping Verification</p>
-                  <p className="text-2xl font-bold text-gray-900">
-                    {gmStats?.pending_shipping_verification || 0}
-                  </p>
-                </div>
-                <div className="p-3 bg-purple-100 rounded-lg">
-                  <Package className="w-6 h-6 text-purple-600" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+            <div className="grid gap-6 md:grid-cols-2">
+              {/* Recent Activity / Pending Files */}
+              <Card className="border-slate-200 shadow-sm">
+                <CardHeader>
+                  <CardTitle className="text-lg font-medium">Pending Verifications</CardTitle>
+                  <CardDescription>Files waiting for your review</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {pendingFiles.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-8 text-center text-slate-500">
+                      <CheckCircle className="h-12 w-12 text-slate-200 mb-3" />
+                      <p>All caught up! No pending files.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {pendingFiles.slice(0, 5).map((file) => (
+                        <div key={file.id} className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50 p-3">
+                          <div className="flex items-center gap-3">
+                            <div className={cn("p-2 rounded-full", file.file_type === 'payment_proof' ? "bg-blue-100 text-blue-600" : "bg-purple-100 text-purple-600")}>
+                              {file.file_type === 'payment_proof' ? <CreditCard className="h-4 w-4" /> : <Package className="h-4 w-4" />}
+                            </div>
+                            <div>
+                              <p className="text-sm font-medium text-slate-900">
+                                {file.file_type === 'payment_proof' ? 'Payment Proof' : 'Shipping Receipt'}
+                              </p>
+                              <p className="text-xs text-slate-500">
+                                Room #{file.transaction?.room?.room_number || 'N/A'}
+                              </p>
+                            </div>
+                          </div>
+                          <Button size="sm" variant="outline" onClick={() => setActiveTab('transactions')}>
+                            Review
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
 
-          <Card>
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Fund Release</p>
-                  <p className="text-2xl font-bold text-gray-900">
-                    {gmStats?.pending_fund_release || 0}
-                  </p>
-                </div>
-                <div className="p-3 bg-green-100 rounded-lg">
-                  <TrendingUp className="w-6 h-6 text-green-600" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Disputed</p>
-                  <p className="text-2xl font-bold text-gray-900">
-                    {gmStats?.disputed_transactions || 0}
-                  </p>
-                </div>
-                <div className="p-3 bg-red-100 rounded-lg">
-                  <AlertCircle className="w-6 h-6 text-red-600" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Quick Actions */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Quick Actions</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              {gmStats?.pending_payment_verification! > 0 && (
-                <Button
-                  onClick={() => { setActiveTab('transactions'); }}
-                  className="w-full"
-                >
-                  <CreditCard className="w-4 h-4 mr-2" />
-                  Verify Payments
-                </Button>
-              )}
-              {gmStats?.pending_shipping_verification! > 0 && (
-                <Button
-                  onClick={() => { setActiveTab('transactions'); }}
-                  variant="outline"
-                  className="w-full"
-                >
-                  <Package className="w-4 h-4 mr-2" />
-                  Verify Shipping
-                </Button>
-              )}
-              {gmStats?.pending_fund_release! > 0 && (
-                <Button
-                  onClick={() => { setActiveTab('transactions'); }}
-                  variant="outline"
-                  className="w-full"
-                >
-                  <TrendingUp className="w-4 h-4 mr-2" />
-                  Release Funds
-                </Button>
-              )}
-              {gmStats?.disputed_transactions! > 0 && (
-                <Button
-                  onClick={() => { setActiveTab('transactions'); }}
-                  variant="destructive"
-                  className="w-full"
-                >
-                  <AlertCircle className="w-4 h-4 mr-2" />
-                  Handle Disputes
-                </Button>
-              )}
+              {/* System Status / Recent Rooms */}
+              <Card className="border-slate-200 shadow-sm">
+                <CardHeader>
+                  <CardTitle className="text-lg font-medium">Active Rooms</CardTitle>
+                  <CardDescription>Recently active transaction rooms</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-4">
+                    {rooms.filter(r => r.status === 'in_use').slice(0, 5).map((room) => (
+                      <div key={room.id} className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="h-2 w-2 rounded-full bg-emerald-500" />
+                          <div>
+                            <p className="text-sm font-medium text-slate-900">Room #{room.room_number}</p>
+                            <p className="text-xs text-slate-500">
+                              {room.buyer?.name || 'Waiting'} & {room.seller?.name || 'Waiting'}
+                            </p>
+                          </div>
+                        </div>
+                        <Button size="sm" variant="ghost" asChild>
+                          <a href={getRoomUrl(room)} target="_blank" rel="noreferrer">
+                            <Eye className="h-4 w-4 text-slate-400" />
+                          </a>
+                        </Button>
+                      </div>
+                    ))}
+                    {rooms.filter(r => r.status === 'in_use').length === 0 && (
+                      <p className="text-center text-sm text-slate-500 py-4">No active rooms at the moment.</p>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
             </div>
-          </CardContent>
-        </Card>
           </TabsContent>
 
           {/* Transactions Tab */}
-          <TabsContent value="transactions" className="space-y-6">
-            <Card>
+          <TabsContent value="transactions" className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <Card className="border-slate-200 shadow-sm">
               <CardHeader>
-                <CardTitle className="flex items-center justify-between">
-                  <span>Transaction Verification</span>
-                  <Button onClick={loadDashboardData} variant="outline" size="sm" disabled={isLoading}>
-                    {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-                    Refresh
-                  </Button>
-                </CardTitle>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="text-lg font-medium">Verification Queue</CardTitle>
+                    <CardDescription>Process pending payments and shipping receipts</CardDescription>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button variant="outline" size="sm">
+                      <Filter className="mr-2 h-4 w-4" />
+                      Filter
+                    </Button>
+                  </div>
+                </div>
               </CardHeader>
               <CardContent>
                 {isLoading && !pendingFiles.length ? (
-                  <div className="flex items-center justify-center py-8">
-                    <Loader2 className="w-6 h-6 animate-spin" />
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 className="h-8 w-8 animate-spin text-slate-400" />
                   </div>
                 ) : pendingFiles.length === 0 ? (
-                  <div className="text-center py-8 text-gray-500">
-                    <FileText className="w-12 h-12 mx-auto mb-4 text-gray-300" />
-                    <p>No pending files to verify</p>
+                  <div className="flex flex-col items-center justify-center py-12 text-center">
+                    <div className="rounded-full bg-slate-100 p-4 mb-4">
+                      <CheckSquare className="h-8 w-8 text-slate-400" />
+                    </div>
+                    <h3 className="text-lg font-medium text-slate-900">All caught up!</h3>
+                    <p className="text-slate-500">No pending files to verify at this time.</p>
                   </div>
                 ) : (
-                  <div className="space-y-4">
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                     {pendingFiles.map((file) => (
                       <FileVerificationCard
                         key={file.id}
@@ -496,68 +552,47 @@ function GMDashboardContent({ rooms, stats }: GMDashboardProps) {
               </CardContent>
             </Card>
 
-            {/* Pending Transactions */}
-            <Card>
+            <Card className="border-slate-200 shadow-sm">
               <CardHeader>
-                <CardTitle>Pending Transactions</CardTitle>
+                <CardTitle className="text-lg font-medium">Transaction History</CardTitle>
+                <CardDescription>Recent transactions and their status</CardDescription>
               </CardHeader>
               <CardContent>
-                {isLoading && !pendingTransactions.length ? (
-                  <div className="flex items-center justify-center py-8">
-                    <Loader2 className="w-6 h-6 animate-spin" />
-                  </div>
-                ) : pendingTransactions.length === 0 ? (
-                  <div className="text-center py-8 text-gray-500">
-                    <CheckCircle className="w-12 h-12 mx-auto mb-4 text-gray-300" />
-                    <p>No pending transactions</p>
-                  </div>
+                {pendingTransactions.length === 0 ? (
+                  <div className="text-center py-8 text-slate-500">No transactions found.</div>
                 ) : (
-                  <div className="space-y-4">
-                    {pendingTransactions.map((transaction) => (
-                      <div key={transaction.id} className="border rounded-lg p-4 hover:bg-gray-50">
-                        <div className="flex items-center justify-between">
-                          <div className="flex-1">
-                            <div className="flex items-center space-x-3 mb-2">
-                              <span className="font-medium">{transaction.transaction_number}</span>
-                              {getTransactionStatusBadge(transaction.status)}
+                  <div className="rounded-md border border-slate-200">
+                    <div className="divide-y divide-slate-200">
+                      {pendingTransactions.map((transaction) => (
+                        <div key={transaction.id} className="flex items-center justify-between p-4 hover:bg-slate-50 transition-colors">
+                          <div className="flex items-center gap-4">
+                            <div className="rounded-full bg-slate-100 p-2">
+                              <FileText className="h-5 w-5 text-slate-600" />
                             </div>
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-gray-600">
-                              <div>
-                                <p className="font-medium">Room</p>
-                                <p>#{transaction.room.room_number}</p>
-                              </div>
-                              <div>
-                                <p className="font-medium">Buyer</p>
-                                <p>{transaction.buyer?.name || 'N/A'}</p>
-                              </div>
-                              <div>
-                                <p className="font-medium">Seller</p>
-                                <p>{transaction.seller?.name || 'N/A'}</p>
-                              </div>
-                              <div>
-                                <p className="font-medium">Amount</p>
-                                <p>{transaction.currency} {transaction.amount.toLocaleString()}</p>
-                              </div>
+                            <div>
+                              <p className="font-medium text-slate-900">{transaction.transaction_number}</p>
+                              <p className="text-sm text-slate-500">
+                                Room #{transaction.room.room_number} • {transaction.currency} {transaction.amount.toLocaleString()}
+                              </p>
                             </div>
                           </div>
-                          <div className="flex items-center space-x-2 ml-4">
-                            <Button variant="outline" size="sm">
-                              <Eye className="w-4 h-4" />
-                            </Button>
+                          <div className="flex items-center gap-4">
+                            {getTransactionStatusBadge(transaction.status)}
                             {(transaction.status === 'delivered' || transaction.status === 'shipped') && (
                               <Button
                                 size="sm"
+                                className="bg-emerald-600 hover:bg-emerald-700 text-white"
                                 onClick={() => handleFundRelease(transaction.id)}
                                 disabled={isLoading}
                               >
-                                {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <TrendingUp className="w-4 h-4 mr-2" />}
+                                {isLoading ? <Loader2 className="h-3 w-3 animate-spin mr-2" /> : <TrendingUp className="h-3 w-3 mr-2" />}
                                 Release Funds
                               </Button>
                             )}
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
                   </div>
                 )}
               </CardContent>
@@ -565,156 +600,92 @@ function GMDashboardContent({ rooms, stats }: GMDashboardProps) {
           </TabsContent>
 
           {/* Rooms Tab */}
-          <TabsContent value="rooms" className="space-y-6">
-            {/* Room Grid */}
-            <Card>
+          <TabsContent value="rooms" className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <Card className="border-slate-200 shadow-sm">
               <CardHeader>
                 <div className="flex items-center justify-between">
-                  <CardTitle className="flex items-center">
-                    <Package className="w-5 h-5 mr-2" />
-                    Room Management
-                  </CardTitle>
-                  <div className="flex items-center space-x-2">
-                    <Button variant="outline" size="sm" disabled={isLoading}>
-                      <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
-                      Refresh
-                    </Button>
+                  <div>
+                    <CardTitle className="text-lg font-medium">Room Management</CardTitle>
+                    <CardDescription>Monitor and manage all active rooms</CardDescription>
+                  </div>
+                  <div className="relative w-64">
+                    <Search className="absolute left-2 top-2.5 h-4 w-4 text-slate-400" />
+                    <input
+                      type="text"
+                      placeholder="Search rooms..."
+                      className="w-full rounded-md border border-slate-300 pl-8 py-2 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+                    />
                   </div>
                 </div>
               </CardHeader>
               <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-              {rooms.map((room) => (
-                <Card
-                  key={room.id}
-                  className={`transition-all hover:shadow-md cursor-pointer ${
-                    selectedRoom?.id === room.id ? 'ring-2 ring-blue-500' : ''
-                  }`}
-                  onClick={() => setSelectedRoom(room)}
-                >
-                  <CardContent className="p-4">
-                    <div className="flex items-center justify-between mb-3">
-                      <h3 className="font-semibold text-gray-900">Room {room.room_number}</h3>
-                      <Badge
-                        variant="secondary"
-                        className={getRoomStatusColor(room.status)}
-                      >
-                        {getStatusIcon(room.status)}
-                        <span className="ml-1">
-                          {room.status === 'free' ? 'Available' : 'In Use'}
-                        </span>
-                      </Badge>
-                    </div>
-
-                    <div className="space-y-2 mb-4">
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-gray-600">Status:</span>
-                        <span className={`font-medium ${
-                          room.status === 'free' ? 'text-green-600' : 'text-orange-600'
-                        }`}>
-                          {room.status === 'free' ? 'Available' : 'Active'}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-gray-600">Users:</span>
-                        <span className="font-medium">
-                          {room.status === 'in_use' ? '2/2' : '0/2'}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="flex-1"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          window.location.href = getRoomUrl(room)
-                        }}
-                      >
-                        <Eye className="w-3 h-3 mr-1" />
-                        View
-                      </Button>
-
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleShareRoom(room)
-                        }}
-                      >
-                        <Share className="w-3 h-3" />
-                      </Button>
-
-                      {room.status === 'in_use' && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="text-red-600 hover:text-red-700"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            handleRoomAction(room.id, 'reset')
-                          }}
-                          disabled={isLoading}
-                        >
-                          <RefreshCw className={`w-3 h-3 mr-1 ${isLoading ? 'animate-spin' : ''}`} />
-                        </Button>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                  {rooms.map((room) => (
+                    <Card
+                      key={room.id}
+                      className={cn(
+                        "transition-all hover:shadow-md cursor-pointer border-slate-200",
+                        selectedRoom?.id === room.id && "ring-2 ring-slate-900"
                       )}
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
+                      onClick={() => setSelectedRoom(room)}
+                    >
+                      <CardContent className="p-4">
+                        <div className="flex items-center justify-between mb-3">
+                          <h3 className="font-semibold text-slate-900">Room #{room.room_number}</h3>
+                          <Badge variant="secondary" className={getRoomStatusColor(room.status)}>
+                            {getStatusIcon(room.status)}
+                            <span className="ml-1.5 capitalize">{room.status.replace('_', ' ')}</span>
+                          </Badge>
+                        </div>
 
-            {rooms.length === 0 && (
-              <div className="text-center py-12">
-                <Package className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-                <h3 className="text-lg font-medium text-gray-900 mb-2">No rooms available</h3>
-                <p className="text-gray-500">Rooms will appear here once they are created.</p>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+                        <div className="space-y-2 mb-4">
+                          <div className="flex items-center justify-between text-sm">
+                            <span className="text-slate-500">Buyer</span>
+                            <span className="font-medium text-slate-900 truncate max-w-[100px]">{room.buyer?.name || '—'}</span>
+                          </div>
+                          <div className="flex items-center justify-between text-sm">
+                            <span className="text-slate-500">Seller</span>
+                            <span className="font-medium text-slate-900 truncate max-w-[100px]">{room.seller?.name || '—'}</span>
+                          </div>
+                        </div>
 
-        {/* Quick Actions */}
-        <Card className="mt-6">
-          <CardHeader>
-            <CardTitle>Quick Actions</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <Button
-                variant="outline"
-                className="h-auto p-4 flex flex-col items-center space-y-2"
-                onClick={() => window.location.href = '/gm/reports'}
-              >
-                <TrendingUp className="w-8 h-8 text-blue-600" />
-                <span>View Reports</span>
-              </Button>
-
-              <Button
-                variant="outline"
-                className="h-auto p-4 flex flex-col items-center space-y-2"
-                onClick={() => window.location.href = '/gm/disputes'}
-              >
-                <AlertTriangle className="w-8 h-8 text-orange-600" />
-                <span>Manage Disputes</span>
-              </Button>
-
-              <Button
-                variant="outline"
-                className="h-auto p-4 flex flex-col items-center space-y-2"
-                onClick={() => window.location.href = '/gm/settings'}
-              >
-                <Settings className="w-8 h-8 text-gray-600" />
-                <span>System Settings</span>
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+                        <div className="flex gap-2 pt-2 border-t border-slate-100">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="flex-1 h-8 text-slate-600"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              window.location.href = getRoomUrl(room)
+                            }}
+                          >
+                            <Eye className="w-3.5 h-3.5 mr-1.5" />
+                            View
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 w-8 p-0 text-slate-600"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleShareRoom(room)
+                            }}
+                          >
+                            <Share className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+                {rooms.length === 0 && (
+                  <div className="text-center py-12 text-slate-500">
+                    <Package className="h-12 w-12 mx-auto mb-4 text-slate-300" />
+                    <p>No rooms found.</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </TabsContent>
         </Tabs>
       </div>
@@ -734,52 +705,52 @@ function GMDashboardContent({ rooms, stats }: GMDashboardProps) {
         <Dialog open={rejectModalOpen} onOpenChange={setRejectModalOpen}>
           <DialogContent className="sm:max-w-lg">
             <DialogHeader>
-              <DialogTitle>Reject File</DialogTitle>
+              <DialogTitle>Reject Verification</DialogTitle>
               <DialogDescription>
-                Please provide a reason for rejecting this {verifyingFile.file_type === 'payment_proof' ? 'payment proof' : 'shipping receipt'}.
+                Please provide a reason for rejecting this {verifyingFile.file_type === 'payment_proof' ? 'payment proof' : 'shipping receipt'}. This will be sent to the user.
               </DialogDescription>
             </DialogHeader>
-            <div className="space-y-4">
-              <div>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
                 <Label htmlFor="reason">Rejection Reason</Label>
                 <Textarea
                   id="reason"
-                  placeholder="Enter reason for rejection..."
+                  placeholder="e.g., Image is blurry, Incorrect amount, etc."
                   value={rejectReason}
                   onChange={(e) => setRejectReason(e.target.value)}
                   rows={4}
-                  className="mt-2"
+                  className="resize-none"
                 />
               </div>
-              <div className="flex justify-end space-x-2">
-                <Button
-                  variant="outline"
-                  onClick={() => {
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setRejectModalOpen(false)
+                  setRejectReason('')
+                  setVerifyingFile(null)
+                }}
+                disabled={isLoading}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  if (verifyingFile && rejectReason.trim()) {
+                    handleFileVerification(verifyingFile, 'reject', rejectReason.trim())
                     setRejectModalOpen(false)
                     setRejectReason('')
                     setVerifyingFile(null)
-                  }}
-                  disabled={isLoading}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  variant="destructive"
-                  onClick={() => {
-                    if (verifyingFile && rejectReason.trim()) {
-                      handleFileVerification(verifyingFile, 'reject', rejectReason.trim())
-                      setRejectModalOpen(false)
-                      setRejectReason('')
-                      setVerifyingFile(null)
-                    }
-                  }}
-                  disabled={isLoading || !rejectReason.trim()}
-                >
-                  {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <XSquare className="w-4 h-4 mr-2" />}
-                  Reject File
-                </Button>
-              </div>
-            </div>
+                  }
+                }}
+                disabled={isLoading || !rejectReason.trim()}
+              >
+                {isLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <XSquare className="w-4 h-4 mr-2" />}
+                Reject File
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
       )}
@@ -798,125 +769,63 @@ interface FileVerificationCardProps {
 
 function FileVerificationCard({ file, onVerification, onApprove, onReject, isLoading }: FileVerificationCardProps) {
   return (
-    <div className="border rounded-lg p-4 hover:bg-gray-50">
-      <div className="flex items-center justify-between">
-        <div className="flex-1">
-          <div className="flex items-center space-x-3 mb-2">
-            {getFileTypeBadge(file.file_type)}
-            <span className="font-medium">{file.file_name}</span>
-            <span className="text-sm text-gray-500">{file.file_size_formatted}</span>
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm text-gray-600">
-            <div>
-              <p className="font-medium">Transaction</p>
-              <p>#{file.transaction_id}</p>
-            </div>
-            <div>
-              <p className="font-medium">Uploaded By</p>
-              <p className="capitalize">{file.uploaded_by}</p>
-            </div>
-            <div>
-              <p className="font-medium">Created</p>
-              <p>{new Date(file.created_at).toLocaleDateString()}</p>
-            </div>
-          </div>
+    <Card className="overflow-hidden border-slate-200 transition-all hover:shadow-md">
+      <div className="aspect-video w-full bg-slate-100 relative group cursor-pointer" onClick={() => window.open(file.file_url, '_blank')}>
+        <img
+          src={file.file_url}
+          alt="Verification Proof"
+          className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+        />
+        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
+          <Eye className="text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-md" />
         </div>
-        <div className="flex items-center space-x-2 ml-4">
+        <div className="absolute top-2 right-2">
+          <Badge className={cn("shadow-sm", file.file_type === 'payment_proof' ? "bg-blue-500 hover:bg-blue-600" : "bg-purple-500 hover:bg-purple-600")}>
+            {file.file_type === 'payment_proof' ? 'Payment' : 'Shipping'}
+          </Badge>
+        </div>
+      </div>
+      <CardContent className="p-4">
+        <div className="mb-4 space-y-1">
+          <p className="font-medium text-slate-900">Room #{file.transaction?.room?.room_number}</p>
+          <p className="text-xs text-slate-500">
+            Uploaded by {file.uploader?.name || 'Unknown'} • {new Date(file.created_at).toLocaleDateString()}
+          </p>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
           <Button
             variant="outline"
-            size="sm"
-            onClick={() => window.open(file.file_url, '_blank')}
-          >
-            <Eye className="w-4 h-4 mr-2" />
-            View
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onReject}
+            className="w-full border-slate-200 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200"
+            onClick={(e) => {
+              e.stopPropagation();
+              onReject();
+            }}
             disabled={isLoading}
           >
-            <XSquare className="w-4 h-4 mr-2" />
             Reject
           </Button>
           <Button
-            size="sm"
-            onClick={onApprove}
+            className="w-full bg-slate-900 hover:bg-slate-800"
+            onClick={(e) => {
+              e.stopPropagation();
+              onApprove();
+            }}
             disabled={isLoading}
           >
-            <CheckSquare className="w-4 h-4 mr-2" />
             Approve
           </Button>
         </div>
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   )
 }
 
-// Helper functions moved outside component
-function getTransactionStatusIcon(status: string) {
-  switch (status) {
-    case 'pending_payment':
-    case 'awaiting_payment_verification':
-      return <CreditCard className="w-4 h-4" />
-    case 'paid':
-    case 'awaiting_shipping_verification':
-      return <Package className="w-4 h-4" />
-    case 'shipped':
-      return <Truck className="w-4 h-4" />
-    case 'delivered':
-      return <CheckCircle className="w-4 h-4" />
-    case 'disputed':
-      return <AlertCircle className="w-4 h-4" />
-    default:
-      return <Clock className="w-4 h-4" />
-  }
-}
-
-function getTransactionStatusBadge(status: string) {
-  const colors = {
-    'pending_payment': 'bg-yellow-100 text-yellow-800',
-    'awaiting_payment_verification': 'bg-orange-100 text-orange-800',
-    'paid': 'bg-blue-100 text-blue-800',
-    'awaiting_shipping_verification': 'bg-purple-100 text-purple-800',
-    'shipped': 'bg-indigo-100 text-indigo-800',
-    'delivered': 'bg-cyan-100 text-cyan-800',
-    'disputed': 'bg-red-100 text-red-800',
-    'completed': 'bg-green-100 text-green-800'
-  }
-
+export default function Dashboard({ rooms, stats }: GMDashboardProps) {
   return (
-    <Badge className={colors[status as keyof typeof colors] || 'bg-gray-100 text-gray-800'}>
-      {getTransactionStatusIcon(status)}
-      <span className="ml-1 capitalize">{status.replace('_', ' ')}</span>
-    </Badge>
-  )
-}
-
-function getFileTypeIcon(fileType: string) {
-  return fileType === 'payment_proof' ?
-    <CreditCard className="w-4 h-4" /> :
-    <Package className="w-4 h-4" />
-}
-
-function getFileTypeBadge(fileType: string) {
-  const colors = {
-    'payment_proof': 'bg-blue-100 text-blue-800',
-    'shipping_receipt': 'bg-green-100 text-green-800'
-  }
-
-  return (
-    <Badge className={colors[fileType as keyof typeof colors] || 'bg-gray-100 text-gray-800'}>
-      {getFileTypeIcon(fileType)}
-      <span className="ml-1">{fileType === 'payment_proof' ? 'Payment Proof' : 'Shipping Receipt'}</span>
-    </Badge>
-  )
-}
-
-export default function GMDashboard({ rooms, stats }: GMDashboardProps) {
-  return (
-    <RekberProvider>
-      <GMDashboardContent rooms={rooms} stats={stats} />
-    </RekberProvider>
+    <AppLayout breadcrumbs={breadcrumbs}>
+      <RekberProvider>
+        <GMDashboardContent rooms={rooms} stats={stats} />
+      </RekberProvider>
+    </AppLayout>
   )
 }

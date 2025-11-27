@@ -13,22 +13,82 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
+
+trait TransactionAuthorization
+{
+    /**
+     * Check if current user can access transaction
+     */
+    private function canUserAccessTransaction(Request $request, Transaction $transaction): bool
+    {
+        $user = auth()->user();
+
+        if (!$user) {
+            Log::warning('No authenticated user found');
+            return false;
+        }
+
+        // Check if user is buyer or seller of the transaction
+        $isBuyer = $transaction->buyer_id && $transaction->buyer_id === $user->id;
+        $isSeller = $transaction->seller_id && $transaction->seller_id === $user->id;
+        $isGM = $user instanceof \App\Models\GmUser;
+
+        // Log access attempt
+        Log::info('Transaction access check', [
+            'user_id' => $user->id,
+            'transaction_id' => $transaction->id,
+            'room_id' => $transaction->room_id,
+            'is_buyer' => $isBuyer,
+            'is_seller' => $isSeller,
+            'is_gm' => $isGM,
+            'user_agent' => $request->userAgent(),
+            'ip' => $request->ip(),
+        ]);
+
+        // Grant access if user is GM or participant
+        return $isGM || $isBuyer || $isSeller;
+    }
+}
 
 class TransactionController extends Controller
 {
+    use TransactionAuthorization;
     /**
      * Get transaction by room ID
      */
-    public function getByRoomId(Request $request, $roomId): JsonResponse
+    public function getByRoomId(Request $request, $room): JsonResponse
     {
-        $transaction = Transaction::where('room_id', $roomId)->first();
+        $roomId = $room;
+        \Log::info('getByRoomId called', [
+            'room_id' => $roomId,
+            'user_agent' => $request->userAgent(),
+            'ip' => $request->ip(),
+        ]);
 
-        if (!$transaction) {
+        // Validate room ID
+        if (!is_numeric($roomId) || $roomId <= 0) {
+            \Log::warning('Invalid room ID provided', ['room_id' => $roomId]);
             return response()->json([
                 'success' => false,
-                'message' => 'Transaction not found for this room',
-            ], 404);
+                'message' => 'Invalid room ID provided',
+                'errors' => ['room_id' => 'Room ID must be a positive integer'],
+            ], 400);
+        }
+
+        $transaction = Transaction::where('room_id', $roomId)->with(['room', 'buyer', 'seller'])->first();
+
+        if (!$transaction) {
+            \Log::info('Transaction not found for room, returning empty response', [
+                'room_id' => $roomId,
+                'exists' => false,
+            ]);
+            return response()->json([
+                'success' => true,
+                'data' => null,
+                'message' => 'No transaction found for this room',
+            ], 200);
         }
 
         // Load necessary relationships
@@ -437,8 +497,10 @@ class TransactionController extends Controller
      */
     public function deleteFile(Request $request, TransactionFile $file): JsonResponse
     {
+        $transaction = $file->transaction;
+
         // Check if file belongs to transaction
-        if ($file->transaction_id !== $transaction->id) {
+        if (!$transaction || $file->transaction_id !== $transaction->id) {
             return response()->json([
                 'success' => false,
                 'message' => 'File not found in this transaction',

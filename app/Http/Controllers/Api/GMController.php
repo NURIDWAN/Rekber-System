@@ -361,13 +361,14 @@ class GMController extends Controller
      */
     public function getPendingTransactions(Request $request): JsonResponse
     {
-        $currentUser = $request->input('current_room_user');
-        $gmUser = null;
+        $gmUser = Auth::guard('gm')->user();
 
-        if ($currentUser && isset($currentUser->gm_user) && $currentUser->gm_user) {
-            $gmUser = $currentUser->gm_user;
-        } elseif (Auth::guard('gm')->check()) {
-            $gmUser = Auth::guard('gm')->user();
+        // Fallback to current_room_user for backward compatibility
+        if (!$gmUser) {
+            $currentUser = $request->input('current_room_user');
+            if ($currentUser && isset($currentUser->gm_user) && $currentUser->gm_user) {
+                $gmUser = $currentUser->gm_user;
+            }
         }
 
         if (!$gmUser) {
@@ -415,13 +416,14 @@ class GMController extends Controller
      */
     public function getPendingFiles(Request $request): JsonResponse
     {
-        $currentUser = $request->input('current_room_user');
-        $gmUser = null;
+        $gmUser = Auth::guard('gm')->user();
 
-        if ($currentUser && isset($currentUser->gm_user) && $currentUser->gm_user) {
-            $gmUser = $currentUser->gm_user;
-        } elseif (Auth::guard('gm')->check()) {
-            $gmUser = Auth::guard('gm')->user();
+        // Fallback to current_room_user for backward compatibility
+        if (!$gmUser) {
+            $currentUser = $request->input('current_room_user');
+            if ($currentUser && isset($currentUser->gm_user) && $currentUser->gm_user) {
+                $gmUser = $currentUser->gm_user;
+            }
         }
 
         if (!$gmUser) {
@@ -468,9 +470,9 @@ class GMController extends Controller
      */
     public function verifyPaymentProof(Request $request, TransactionFile $file): JsonResponse
     {
-        $currentUser = $request->input('current_room_user');
+        $gmUser = Auth::guard('gm')->user();
 
-        if (!$currentUser || !isset($currentUser->gm_user) || !$currentUser->gm_user) {
+        if (!$gmUser) {
             return response()->json([
                 'success' => false,
                 'message' => 'Unauthorized - GM access required',
@@ -478,10 +480,29 @@ class GMController extends Controller
         }
 
         // Validate file is payment proof and pending
-        if (!$file->isPaymentProof() || !$file->isPending()) {
+        if (!$file->isPaymentProof()) {
+            \Log::warning('Payment verification attempted on non-payment proof file', [
+                'file_id' => $file->id,
+                'file_type' => $file->file_type,
+                'status' => $file->status,
+                'gm_user_id' => $gmUser->id,
+            ]);
             return response()->json([
                 'success' => false,
-                'message' => 'File cannot be verified',
+                'message' => 'This file is not a payment proof file. File type: ' . $file->file_type,
+            ], 400);
+        }
+
+        if (!$file->isPending()) {
+            \Log::warning('Payment verification attempted on non-pending file', [
+                'file_id' => $file->id,
+                'file_type' => $file->file_type,
+                'status' => $file->status,
+                'gm_user_id' => $gmUser->id,
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'This file has already been processed. Current status: ' . $file->status,
             ], 400);
         }
 
@@ -503,7 +524,7 @@ class GMController extends Controller
 
             $transaction = $file->transaction;
             $action = $request->input('action');
-            $gmUserId = $currentUser->id;
+            $gmUserId = $gmUser->id;
 
             if ($action === 'approve') {
                 // Verify the file
@@ -517,7 +538,7 @@ class GMController extends Controller
                     \App\Models\RoomActivityLog::create([
                         'room_id' => $transaction->room_id,
                         'action' => 'payment_verified',
-                        'user_name' => $currentUser->name,
+                        'user_name' => $gmUser->name,
                         'role' => 'gm',
                         'description' => 'Payment proof verified by GM',
                         'timestamp' => now(),
@@ -528,7 +549,7 @@ class GMController extends Controller
                     // Broadcast events
                     broadcast(new FileVerificationUpdated($file, 'approved'));
                     broadcast(new TransactionUpdated($transaction, 'payment_verified', [
-                        'gm_name' => $currentUser->name,
+                        'gm_name' => $gmUser->name,
                         'file_id' => $file->id,
                     ]));
 
@@ -563,7 +584,7 @@ class GMController extends Controller
                     \App\Models\RoomActivityLog::create([
                         'room_id' => $transaction->room_id,
                         'action' => 'payment_rejected',
-                        'user_name' => $currentUser->name,
+                        'user_name' => $gmUser->name,
                         'role' => 'gm',
                         'description' => 'Payment proof rejected: ' . $reason,
                         'timestamp' => now(),
@@ -574,7 +595,7 @@ class GMController extends Controller
                     // Broadcast events
                     broadcast(new FileVerificationUpdated($file, 'rejected', $reason));
                     broadcast(new TransactionUpdated($transaction, 'payment_rejected', [
-                        'gm_name' => $currentUser->name,
+                        'gm_name' => $gmUser->name,
                         'file_id' => $file->id,
                         'rejection_reason' => $reason,
                     ]));
@@ -621,9 +642,9 @@ class GMController extends Controller
      */
     public function verifyShippingReceipt(Request $request, TransactionFile $file): JsonResponse
     {
-        $currentUser = $request->input('current_room_user');
+        $gmUser = Auth::guard('gm')->user();
 
-        if (!$currentUser || !isset($currentUser->gm_user) || !$currentUser->gm_user) {
+        if (!$gmUser) {
             return response()->json([
                 'success' => false,
                 'message' => 'Unauthorized - GM access required',
@@ -631,10 +652,29 @@ class GMController extends Controller
         }
 
         // Validate file is shipping receipt and pending
-        if (!$file->isShippingReceipt() || !$file->isPending()) {
+        if (!$file->isShippingReceipt()) {
+            \Log::warning('Shipping verification attempted on non-shipping receipt file', [
+                'file_id' => $file->id,
+                'file_type' => $file->file_type,
+                'status' => $file->status,
+                'gm_user_id' => $gmUser->id,
+            ]);
             return response()->json([
                 'success' => false,
-                'message' => 'File cannot be verified',
+                'message' => 'This file is not a shipping receipt file. File type: ' . $file->file_type,
+            ], 400);
+        }
+
+        if (!$file->isPending()) {
+            \Log::warning('Shipping verification attempted on non-pending file', [
+                'file_id' => $file->id,
+                'file_type' => $file->file_type,
+                'status' => $file->status,
+                'gm_user_id' => $gmUser->id,
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'This file has already been processed. Current status: ' . $file->status,
             ], 400);
         }
 
@@ -656,7 +696,7 @@ class GMController extends Controller
 
             $transaction = $file->transaction;
             $action = $request->input('action');
-            $gmUserId = $currentUser->id;
+            $gmUserId = $gmUser->id;
 
             if ($action === 'approve') {
                 // Verify the file
@@ -670,7 +710,7 @@ class GMController extends Controller
                     \App\Models\RoomActivityLog::create([
                         'room_id' => $transaction->room_id,
                         'action' => 'shipping_verified',
-                        'user_name' => $currentUser->name,
+                        'user_name' => $gmUser->name,
                         'role' => 'gm',
                         'description' => 'Shipping receipt verified by GM',
                         'timestamp' => now(),
@@ -681,7 +721,7 @@ class GMController extends Controller
                     // Broadcast events
                     broadcast(new FileVerificationUpdated($file, 'approved'));
                     broadcast(new TransactionUpdated($transaction, 'shipping_verified', [
-                        'gm_name' => $currentUser->name,
+                        'gm_name' => $gmUser->name,
                         'file_id' => $file->id,
                     ]));
 
@@ -716,7 +756,7 @@ class GMController extends Controller
                     \App\Models\RoomActivityLog::create([
                         'room_id' => $transaction->room_id,
                         'action' => 'shipping_rejected',
-                        'user_name' => $currentUser->name,
+                        'user_name' => $gmUser->name,
                         'role' => 'gm',
                         'description' => 'Shipping receipt rejected: ' . $reason,
                         'timestamp' => now(),
@@ -727,7 +767,7 @@ class GMController extends Controller
                     // Broadcast events
                     broadcast(new FileVerificationUpdated($file, 'rejected', $reason));
                     broadcast(new TransactionUpdated($transaction, 'shipping_rejected', [
-                        'gm_name' => $currentUser->name,
+                        'gm_name' => $gmUser->name,
                         'file_id' => $file->id,
                         'rejection_reason' => $reason,
                     ]));
@@ -774,9 +814,9 @@ class GMController extends Controller
      */
     public function releaseFunds(Request $request, Transaction $transaction): JsonResponse
     {
-        $currentUser = $request->input('current_room_user');
+        $gmUser = Auth::guard('gm')->user();
 
-        if (!$currentUser || !isset($currentUser->gm_user) || !$currentUser->gm_user) {
+        if (!$gmUser) {
             return response()->json([
                 'success' => false,
                 'message' => 'Unauthorized - GM access required',
@@ -806,7 +846,7 @@ class GMController extends Controller
         try {
             DB::beginTransaction();
 
-            $gmUserId = $currentUser->id;
+            $gmUserId = $gmUser->id;
             $notes = $request->input('notes', '');
 
             // Release funds
@@ -824,7 +864,7 @@ class GMController extends Controller
                 \App\Models\RoomActivityLog::create([
                     'room_id' => $transaction->room_id,
                     'action' => 'funds_released',
-                    'user_name' => $currentUser->name,
+                    'user_name' => $gmUser->name,
                     'role' => 'gm',
                     'description' => 'Funds released and transaction completed',
                     'timestamp' => now(),
@@ -870,9 +910,9 @@ class GMController extends Controller
      */
     public function getTransactionDetails(Transaction $transaction): JsonResponse
     {
-        $currentUser = request('current_room_user');
+        $gmUser = Auth::guard('gm')->user();
 
-        if (!$currentUser || !isset($currentUser->gm_user) || !$currentUser->gm_user) {
+        if (!$gmUser) {
             return response()->json([
                 'success' => false,
                 'message' => 'Unauthorized - GM access required',
@@ -915,9 +955,9 @@ class GMController extends Controller
      */
     public function getFileDetails(TransactionFile $file): JsonResponse
     {
-        $currentUser = request('current_room_user');
+        $gmUser = Auth::guard('gm')->user();
 
-        if (!$currentUser || !isset($currentUser->gm_user) || !$currentUser->gm_user) {
+        if (!$gmUser) {
             return response()->json([
                 'success' => false,
                 'message' => 'Unauthorized - GM access required',
@@ -955,9 +995,9 @@ class GMController extends Controller
      */
     public function updateNotes(Request $request, Transaction $transaction): JsonResponse
     {
-        $currentUser = $request->input('current_room_user');
+        $gmUser = Auth::guard('gm')->user();
 
-        if (!$currentUser || !isset($currentUser->gm_user) || !$currentUser->gm_user) {
+        if (!$gmUser) {
             return response()->json([
                 'success' => false,
                 'message' => 'Unauthorized - GM access required',

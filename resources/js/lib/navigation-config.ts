@@ -68,59 +68,15 @@ export const navigationConfig: NavigationSection[] = [
     ]
   },
   {
-    title: 'User Navigation',
-    items: [
-      {
-        title: 'Dashboard',
-        href: '/dashboard',
-        icon: Activity,
-        requiredAuth: 'authenticated',
-        pageContexts: ['dashboard', 'room_detail']
-      },
-      {
-        title: 'My Rooms',
-        href: '/dashboard/rooms',
-        icon: Users,
-        requiredAuth: 'authenticated',
-        allowedRoles: ['buyer', 'seller'],
-        pageContexts: ['dashboard']
-      },
-      {
-        title: 'Transactions',
-        href: '/dashboard/transactions',
-        icon: CreditCard,
-        requiredAuth: 'authenticated',
-        allowedRoles: ['buyer', 'seller'],
-        pageContexts: ['dashboard']
-      },
-      {
-        title: 'Orders',
-        href: '/dashboard/orders',
-        icon: Package,
-        requiredAuth: 'authenticated',
-        allowedRoles: ['buyer', 'seller'],
-        pageContexts: ['dashboard']
-      },
-      {
-        title: 'Shipping',
-        href: '/dashboard/shipping',
-        icon: Truck,
-        requiredAuth: 'authenticated',
-        allowedRoles: ['seller'],
-        pageContexts: ['dashboard']
-      }
-    ]
-  },
-  {
-    title: 'Admin Navigation',
+    title: 'Dashboard',
     items: [
       {
         title: 'GM Dashboard',
-        href: '/gm/dashboard',
+        href: '/dashboard',
         icon: Shield,
         requiredAuth: 'authenticated',
         allowedRoles: ['gm'],
-        pageContexts: ['gm_dashboard']
+        pageContexts: ['gm_dashboard', 'dashboard']
       },
       {
         title: 'Room Management',
@@ -131,17 +87,9 @@ export const navigationConfig: NavigationSection[] = [
         pageContexts: ['gm_dashboard']
       },
       {
-        title: 'Dispute Resolution',
-        href: '/gm/disputes',
-        icon: AlertTriangle,
-        requiredAuth: 'authenticated',
-        allowedRoles: ['gm'],
-        pageContexts: ['gm_dashboard']
-      },
-      {
-        title: 'User Management',
-        href: '/gm/users',
-        icon: UserCheck,
+        title: 'Transactions',
+        href: '/transactions',
+        icon: CreditCard,
         requiredAuth: 'authenticated',
         allowedRoles: ['gm'],
         pageContexts: ['gm_dashboard']

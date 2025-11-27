@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { handleApiError, handleApiResponse, handleFileUploadResponse, handleVerificationResponse } from '@/utils/api-response-handler'
 
 // API base URL
 const API_BASE = '/api'
@@ -130,10 +131,9 @@ class TransactionAPI {
           }
         }
       )
-      return response.data
+      return handleFileUploadResponse(response.data, file.name)
     } catch (error: any) {
-      console.error('Payment proof upload failed:', error)
-      throw error.response?.data || { success: false, message: 'Upload failed' }
+      return handleApiError(error)
     }
   }
 
@@ -155,10 +155,9 @@ class TransactionAPI {
           }
         }
       )
-      return response.data
+      return handleFileUploadResponse(response.data, file.name)
     } catch (error: any) {
-      console.error('Shipping receipt upload failed:', error)
-      throw error.response?.data || { success: false, message: 'Upload failed' }
+      return handleApiError(error)
     }
   }
 
@@ -168,10 +167,9 @@ class TransactionAPI {
   async getTransactionByRoomId(roomId: number): Promise<{ success: boolean; data: TransactionDetails }> {
     try {
       const response = await axios.get(`${API_BASE}/transactions/by-room/${roomId}`)
-      return response.data
+      return handleApiResponse(response.data, { showSuccessOnSuccess: false, showErrorOnError: false })
     } catch (error: any) {
-      console.error('Get transaction by room ID failed:', error)
-      throw error.response?.data || { success: false, message: 'Failed to get transaction by room ID' }
+      return handleApiError(error)
     }
   }
 
@@ -181,10 +179,9 @@ class TransactionAPI {
   async getTransactionDetails(transactionId: number): Promise<{ success: boolean; data: TransactionDetails }> {
     try {
       const response = await axios.get(`${API_BASE}/transactions/${transactionId}`)
-      return response.data
+      return handleApiResponse(response.data, { showSuccessOnSuccess: false, showErrorOnError: false })
     } catch (error: any) {
-      console.error('Get transaction details failed:', error)
-      throw error.response?.data || { success: false, message: 'Failed to get transaction details' }
+      return handleApiError(error)
     }
   }
 
@@ -330,10 +327,9 @@ class TransactionAPI {
           'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || ''
         }
       })
-      return response.data
+      return handleVerificationResponse(response.data, 'payment', action)
     } catch (error: any) {
-      console.error('Verify payment proof failed:', error)
-      throw error.response?.data || { success: false, message: 'Failed to verify payment proof' }
+      return handleApiError(error)
     }
   }
 
@@ -350,10 +346,9 @@ class TransactionAPI {
           'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || ''
         }
       })
-      return response.data
+      return handleVerificationResponse(response.data, 'shipping', action)
     } catch (error: any) {
-      console.error('Verify shipping receipt failed:', error)
-      throw error.response?.data || { success: false, message: 'Failed to verify shipping receipt' }
+      return handleApiError(error)
     }
   }
 

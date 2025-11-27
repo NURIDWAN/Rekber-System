@@ -138,111 +138,33 @@ export default function JoinRoomPage({ room, role, share_links, encrypted_urls, 
                 const action = result.data.action_performed;
                 const otherSessions = result.data.other_active_sessions || [];
 
-                // Set session cookie with namespace
-                if (sessionToken && cookieName) {
-                    const expires = new Date();
-                    expires.setTime(expires.getTime() + (60 * 120 * 1000)); // 120 minutes
+                // Cookies are now set by the server via Set-Cookie header
+                // We just need to wait a moment for them to be processed
+                await new Promise(resolve => setTimeout(resolve, 100));
 
-                    // Set room-specific session cookie
-                    document.cookie = `${cookieName}=${sessionToken};` +
-                        `expires=${expires.toUTCString()};` +
-                        `path=/;` +
-                        `SameSite=Lax;` +
-                        (window.location.protocol === 'https:' ? 'Secure;' : '');
+                // Store session info in localStorage for easy access
+                const sessionInfo = {
+                    roomId,
+                    roomNumber: result.data.room_number,
+                    role: result.data.role,
+                    cookieName,
+                    userIdentifier,
+                    userName: result.data.user_name,
+                    action,
+                    timestamp: new Date().toISOString()
+                };
 
-                    // Set user identifier cookie (30 days)
-                    const identifierExpires = new Date();
-                    identifierExpires.setTime(identifierExpires.getTime() + (60 * 24 * 30 * 1000));
-                    document.cookie = `rekber_user_identifier=${userIdentifier};` +
-                        `expires=${identifierExpires.toUTCString()};` +
-                        `path=/;` +
-                        `SameSite=Lax;` +
-                        (window.location.protocol === 'https:' ? 'Secure;' : '');
+                // Get existing sessions from localStorage
+                const existingSessions = JSON.parse(localStorage.getItem('rekber_sessions') || '[]');
 
-                    console.log(`Session management:`, {
-                        action,
-                        cookieName,
-                        roomId: result.data.room_number || roomId,
-                        sessionToken: sessionToken.substring(0, 8) + '...',
-                        user: result.data.user_name,
-                        userIdentifier: userIdentifier.substring(0, 8) + '...',
-                        otherActiveSessions: otherSessions.length
-                    });
+                // Remove any existing session for the same room
+                const filteredSessions = existingSessions.filter(s => s.roomId !== roomId);
 
-                    // Verify cookies were set with more robust checking
-                    await new Promise(resolve => setTimeout(resolve, 500));
+                // Add new session
+                filteredSessions.push(sessionInfo);
 
-                    const sessionCookieCheck = document.cookie
-                        .split(';')
-                        .map(c => c.trim())
-                        .find(c => c.startsWith(`${cookieName}=`));
-
-                    const identifierCookieCheck = document.cookie
-                        .split(';')
-                        .map(c => c.trim())
-                        .find(c => c.startsWith('rekber_user_identifier='));
-
-                    console.log('Cookie verification:', {
-                        cookieName,
-                        sessionCookieSet: !!sessionCookieCheck,
-                        identifierCookieSet: !!identifierCookieCheck,
-                        allCookies: document.cookie.split(';').map(c => c.trim().split('=')[0])
-                    });
-
-                    if (!sessionCookieCheck) {
-                        console.error('Failed to set session cookie:', cookieName);
-                        // Try alternative method
-                        try {
-                            const altExpires = new Date();
-                            altExpires.setTime(altExpires.getTime() + (60 * 120 * 1000));
-                            document.cookie = `${cookieName}=${sessionToken}; expires=${altExpires.toUTCString()}; path=/`;
-
-                            // Check again
-                            const altCheck = document.cookie
-                                .split(';')
-                                .map(c => c.trim())
-                                .find(c => c.startsWith(`${cookieName}=`));
-
-                            if (!altCheck) {
-                                setJoinError('Failed to save session. Please check your browser settings and try again.');
-                                return;
-                            }
-                        } catch (e) {
-                            console.error('Alternative cookie setting failed:', e);
-                            setJoinError('Failed to save session. Please try again.');
-                            return;
-                        }
-                    }
-
-                    if (!identifierCookieCheck) {
-                        console.error('Failed to set user identifier cookie');
-                        // This is less critical, continue with session
-                    }
-
-                    // Store session info in localStorage for easy access
-                    const sessionInfo = {
-                        roomId,
-                        roomNumber: result.data.room_number,
-                        role: result.data.role,
-                        cookieName,
-                        userIdentifier,
-                        userName: result.data.user_name,
-                        action,
-                        timestamp: new Date().toISOString()
-                    };
-
-                    // Get existing sessions from localStorage
-                    const existingSessions = JSON.parse(localStorage.getItem('rekber_sessions') || '[]');
-
-                    // Remove any existing session for the same room
-                    const filteredSessions = existingSessions.filter(s => s.roomId !== roomId);
-
-                    // Add new session
-                    filteredSessions.push(sessionInfo);
-
-                    // Store updated sessions (keep only last 10 sessions)
-                    localStorage.setItem('rekber_sessions', JSON.stringify(filteredSessions.slice(-10)));
-                }
+                // Store updated sessions (keep only last 10 sessions)
+                localStorage.setItem('rekber_sessions', JSON.stringify(filteredSessions.slice(-10)));
             } else if (!result.success && result.requires_role_switch) {
                 // Handle role switch suggestion
                 const switchRole = window.confirm(
