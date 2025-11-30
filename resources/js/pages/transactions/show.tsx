@@ -92,6 +92,10 @@ export default function TransactionVerificationDetail({ transaction, activities 
   const [rejectModalOpen, setRejectModalOpen] = useState(false)
   const [verificationType, setVerificationType] = useState<'payment' | 'shipping'>('payment')
   const [isLoading, setIsLoading] = useState(false)
+  const [previewImage, setPreviewImage] = useState<string | null>(null)
+  const [previewModalOpen, setPreviewModalOpen] = useState(false)
+  const [releaseFundsModalOpen, setReleaseFundsModalOpen] = useState(false)
+  const [releaseFundsNotes, setReleaseFundsNotes] = useState('')
 
   const getStatusBadge = (status: string) => {
     const statusConfig = {
@@ -142,6 +146,7 @@ export default function TransactionVerificationDetail({ transaction, activities 
 
   const canVerifyPayment = transaction.status === 'awaiting_payment_verification'
   const canVerifyShipping = transaction.status === 'awaiting_shipping_verification'
+  const canReleaseFunds = transaction.status === 'goods_received'
 
   const handleVerifyFile = async (file: TransactionFile, action: 'approve' | 'reject') => {
     if (action === 'reject' && !rejectReason.trim()) {
@@ -172,6 +177,25 @@ export default function TransactionVerificationDetail({ transaction, activities 
     } catch (error) {
       console.error('Verification failed:', error)
       // Error notification is now handled by the API service
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleReleaseFunds = async () => {
+    setIsLoading(true)
+    try {
+      await transactionAPI.releaseFunds(transaction.id, releaseFundsNotes)
+
+      router.reload({
+        only: ['transaction', 'activities'],
+        onSuccess: () => {
+          setReleaseFundsModalOpen(false)
+          setReleaseFundsNotes('')
+        }
+      })
+    } catch (error) {
+      console.error('Release funds failed:', error)
     } finally {
       setIsLoading(false)
     }
@@ -285,6 +309,10 @@ export default function TransactionVerificationDetail({ transaction, activities 
                               variant="outline"
                               size="sm"
                               className="flex items-center gap-2"
+                              onClick={() => {
+                                setPreviewImage(file.file_url || '');
+                                setPreviewModalOpen(true);
+                              }}
                             >
                               <Eye className="w-4 h-4" />
                               Lihat
@@ -342,6 +370,10 @@ export default function TransactionVerificationDetail({ transaction, activities 
                               variant="outline"
                               size="sm"
                               className="flex items-center gap-2"
+                              onClick={() => {
+                                setPreviewImage(file.file_url || '');
+                                setPreviewModalOpen(true);
+                              }}
                             >
                               <Eye className="w-4 h-4" />
                               Lihat
@@ -414,6 +446,24 @@ export default function TransactionVerificationDetail({ transaction, activities 
 
             {/* Sidebar */}
             <div className="space-y-6">
+              {/* Admin Actions */}
+              {canReleaseFunds && (
+                <Card className="border-green-200 bg-green-50">
+                  <CardHeader>
+                    <CardTitle className="text-green-800">Aksi Admin</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <Button
+                      className="w-full bg-green-600 hover:bg-green-700"
+                      onClick={() => setReleaseFundsModalOpen(true)}
+                    >
+                      <CheckCircle className="w-4 h-4 mr-2" />
+                      Rilis Dana ke Penjual
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
+
               {/* Participants */}
               <Card>
                 <CardHeader>
@@ -520,6 +570,76 @@ export default function TransactionVerificationDetail({ transaction, activities 
                 Tolak
               </Button>
             </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Release Funds Modal */}
+      <Dialog open={releaseFundsModalOpen} onOpenChange={setReleaseFundsModalOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Konfirmasi Rilis Dana</DialogTitle>
+            <DialogDescription>
+              Apakah Anda yakin ingin merilis dana ke penjual? Aksi ini tidak dapat dibatalkan.
+              Dana akan ditransfer ke saldo penjual dan transaksi akan ditandai sebagai selesai.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="releaseNotes">Catatan (Opsional)</Label>
+              <Textarea
+                id="releaseNotes"
+                placeholder="Tambahkan catatan..."
+                value={releaseFundsNotes}
+                onChange={(e) => setReleaseFundsNotes(e.target.value)}
+                rows={3}
+              />
+            </div>
+            <div className="flex justify-end gap-3">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setReleaseFundsModalOpen(false)
+                  setReleaseFundsNotes('')
+                }}
+              >
+                Batal
+              </Button>
+              <Button
+                onClick={handleReleaseFunds}
+                disabled={isLoading}
+                className="bg-green-600 hover:bg-green-700"
+              >
+                {isLoading && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
+                Ya, Rilis Dana
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Image Preview Modal */}
+      <Dialog open={previewModalOpen} onOpenChange={setPreviewModalOpen}>
+        <DialogContent className="max-w-4xl w-full p-0 overflow-hidden bg-transparent border-none shadow-none">
+          <DialogTitle className="sr-only">Preview File</DialogTitle>
+          <DialogDescription className="sr-only">
+            Preview of the uploaded file
+          </DialogDescription>
+          <div className="relative w-full h-full flex items-center justify-center">
+            {previewImage && (
+              <img
+                src={previewImage}
+                alt="Preview"
+                className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl"
+              />
+            )}
+            <Button
+              className="absolute top-4 right-4 rounded-full bg-black/50 hover:bg-black/70 text-white"
+              size="icon"
+              onClick={() => setPreviewModalOpen(false)}
+            >
+              <XSquare className="w-6 h-6" />
+            </Button>
           </div>
         </DialogContent>
       </Dialog>

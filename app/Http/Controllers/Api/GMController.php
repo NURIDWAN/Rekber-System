@@ -824,7 +824,8 @@ class GMController extends Controller
         }
 
         // Validate transaction is ready for fund release
-        if ($transaction->status !== 'delivered') {
+        // Validate transaction is ready for fund release
+        if (!in_array($transaction->status, ['delivered', 'goods_received'])) {
             return response()->json([
                 'success' => false,
                 'message' => 'Transaction is not ready for fund release',

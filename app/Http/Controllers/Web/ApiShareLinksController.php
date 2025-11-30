@@ -24,6 +24,27 @@ class ApiShareLinksController extends Controller
         $roomUrlService = app(RoomUrlService::class);
         $pin = $validated['pin'] ?? null;
 
+        // Save PIN to room
+        if ($pin) {
+            $room->update([
+                'pin' => $pin,
+                'pin_enabled' => true
+            ]);
+        } else {
+            // If explicit null/empty pin sent, disable it
+            if ($request->has('pin')) {
+                $room->update([
+                    'pin' => null,
+                    'pin_enabled' => false
+                ]);
+            }
+        }
+
+        // Use stored PIN if not provided in request but enabled in DB
+        if (!$pin && $room->pin_enabled) {
+            $pin = $room->pin;
+        }
+
         return response()->json([
             'success' => true,
             'message' => 'Shareable links generated successfully',
@@ -33,8 +54,8 @@ class ApiShareLinksController extends Controller
                     'room_number' => $room->room_number ?? null,
                     'status' => $room->status,
                 ],
-                'pin_enabled' => !empty($pin),
-                'pin' => $pin,
+                'pin_enabled' => $room->pin_enabled,
+                'pin' => $room->pin,
                 'links' => $roomUrlService->generateShareableLinks($room->id, $pin),
             ],
         ]);

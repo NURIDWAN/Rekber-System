@@ -245,9 +245,26 @@ class GmController extends Controller
             'disputed_transactions' => Transaction::disputed()->count(),
         ];
 
+        // Transform to array and fix URLs
+        $pendingTransactionsArray = $pendingTransactions->map(function ($transaction) {
+            $arr = $transaction->toArray();
+            if (isset($arr['files'])) {
+                foreach ($arr['files'] as &$file) {
+                    $file['file_url'] = route('gm.rooms.files.download', ['room' => $transaction->room_id, 'file' => $file['id']]);
+                }
+            }
+            return $arr;
+        });
+
+        $pendingFilesArray = $pendingFiles->map(function ($file) {
+            $arr = $file->toArray();
+            $arr['file_url'] = route('gm.rooms.files.download', ['room' => $file->room_id, 'file' => $file->id]);
+            return $arr;
+        });
+
         return Inertia::render('transactions/index', [
-            'pendingTransactions' => $pendingTransactions,
-            'pendingFiles' => $pendingFiles,
+            'pendingTransactions' => $pendingTransactionsArray,
+            'pendingFiles' => $pendingFilesArray,
             'stats' => $stats,
         ]);
     }
@@ -275,17 +292,152 @@ class GmController extends Controller
             ->limit(20)
             ->get();
 
+        // Convert to array to allow overwriting the appended file_url accessor
+        $transactionArray = $transaction->toArray();
+
+        if (isset($transactionArray['files'])) {
+            foreach ($transactionArray['files'] as &$file) {
+                $file['file_url'] = route('gm.rooms.files.download', ['room' => $transaction->room_id, 'file' => $file['id']]);
+            }
+        }
+
         return Inertia::render('transactions/show', [
-            'transaction' => $transaction,
+            'transaction' => $transactionArray,
             'activities' => $activities,
         ]);
     }
 
     /**
-     * Display user verification management page.
+     * Join room as GM.
      */
+    public function joinRoom(Request $request, Room $room)
+    {
+        $multiSessionManager = app(\App\Services\MultiSessionManager::class);
+        $roomUrlService = app(\App\Services\RoomUrlService::class);
+
+        // Get or create user identifier
+        $identifierResult = $multiSessionManager->ensureUserIdentifier($request);
+        $userIdentifier = $identifierResult['identifier'];
+
+        // Generate session token
+        $sessionToken = $multiSessionManager->generateSessionToken($room->id, 'gm', $userIdentifier);
+        $cookieName = $multiSessionManager->generateCookieName($room->id, 'gm', $userIdentifier);
+
+        // Create RoomUser for GM
+        // We use a generic name or the auth user's name if available
+        $gmName = 'GM';
+        if (auth()->check()) {
+            $gmName = 'GM ' . auth()->user()->name;
+        }
+
+        RoomUser::create([
+            'room_id' => $room->id,
+            'name' => $gmName,
+            'phone' => '-', // GM doesn't need a phone number
+            'role' => 'gm',
+            'session_token' => $sessionToken,
+            'user_identifier' => $userIdentifier,
+            'joined_at' => now(),
+            'is_online' => true,
+            'last_seen' => now(),
+        ]);
+
+        // Log activity
+        RoomActivityLog::create([
+            'room_id' => $room->id,
+            'action' => 'gm_joined',
+            'user_name' => $gmName,
+            'role' => 'gm',
+            'description' => 'GM joined the room',
+            'timestamp' => now(),
+        ]);
+
+        $encryptedRoomId = $roomUrlService->encryptRoomId($room->id);
+
+        $response = redirect()->route('rooms.show', ['room' => $encryptedRoomId]);
+
+        // Attach cookies
+        $response->withCookie(cookie($cookieName, $sessionToken, 120 * 60));
+
+        if ($identifierResult['is_new']) {
+            $response->withCookie(cookie('rekber_user_identifier', $userIdentifier, 60 * 24 * 30));
+        }
+
+        return $response;
+    }
+
+    /**
+     * Reset room (Clear sessions and restart).
+     */
+    public function resetRoom(Room $room)
+    {
+        // 1. Delete all users (clears sessions)
+        RoomUser::where('room_id', $room->id)->delete();
+
+        // 2. Delete all messages
+        $room->messages()->delete();
+
+        // 3. Delete activity logs
+        $room->activityLogs()->delete();
+
+        // 4. Delete transactions and files
+        $transaction = Transaction::where('room_id', $room->id)->first();
+        if ($transaction) {
+            $transaction->files()->delete();
+            $transaction->delete();
+        }
+
+        // 5. Reset status
+        $room->status = 'free';
+        $room->save();
+
+        return back()->with('success', 'Room has been reset successfully.');
+    }
+
+    /**
+     * Complete transaction and release funds.
+     */
+    public function completeTransaction(Request $request, $room)
+    {
+        $roomModel = request('current_room');
+        if (!$roomModel) {
+            return back()->withErrors(['general' => 'Room not found']);
+        }
+
+        $service = app(\App\Services\TransactionService::class);
+
+        try {
+            $service->completeTransaction($roomModel, 'Transaction completed by GM via Web UI');
+            return back()->with('success', 'Dana berhasil dirilis dan transaksi selesai!');
+        } catch (\Exception $e) {
+            return back()->withErrors(['general' => 'Gagal merilis dana: ' . $e->getMessage()]);
+        }
+    }
+
     public function verifications()
     {
         return Inertia::render('verifications/index');
+    }
+
+    /**
+     * Download file for GM.
+     */
+    public function downloadFile(Room $room, TransactionFile $file)
+    {
+        if ($file->room_id !== $room->id) {
+            abort(404);
+        }
+
+        // Check private storage (new uploads)
+        if (\Illuminate\Support\Facades\Storage::disk('local')->exists($file->file_path)) {
+            return response()->file(storage_path('app/private/' . $file->file_path));
+        }
+
+        // Check public storage (legacy uploads)
+        if (\Illuminate\Support\Facades\Storage::disk('public')->exists($file->file_path)) {
+            return response()->file(storage_path('app/public/' . $file->file_path));
+        }
+
+        abort(404);
     }
 }

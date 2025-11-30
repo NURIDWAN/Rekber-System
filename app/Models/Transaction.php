@@ -383,7 +383,7 @@ class Transaction extends Model
      */
     public function releaseFunds(int $gmUserId): bool
     {
-        if ($this->status !== 'delivered') {
+        if (!in_array($this->status, ['delivered', 'goods_received'])) {
             return false;
         }
 
@@ -446,7 +446,12 @@ class Transaction extends Model
             'shipped' => [
                 'text' => 'Confirm Receipt',
                 'required_by' => 'buyer',
-                'next_status' => 'delivered',
+                'next_status' => 'goods_received',
+            ],
+            'goods_received' => [
+                'text' => 'Release Funds',
+                'required_by' => 'gm',
+                'next_status' => 'completed',
             ],
             'delivered' => [
                 'text' => 'Release Funds',
@@ -482,6 +487,7 @@ class Transaction extends Model
             'paid' => 50,
             'awaiting_shipping_verification' => 75,
             'shipped' => 80,
+            'goods_received' => 90,
             'delivered' => 90,
             'completed' => 100,
         ];
@@ -497,6 +503,7 @@ class Transaction extends Model
         return $query->whereIn('status', [
             'awaiting_payment_verification',
             'awaiting_shipping_verification',
+            'goods_received',
             'delivered'
         ]);
     }

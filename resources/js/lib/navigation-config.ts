@@ -15,7 +15,7 @@ export interface NavigationContext {
   hasUnreadMessages?: boolean;
 }
 
-export interface NavigationItem extends NavItem {
+export interface NavigationItem extends Partial<NavItem> {
   requiredAuth?: AuthenticationState;
   allowedRoles?: UserRole[];
   pageContexts?: PageContext[];
@@ -48,13 +48,6 @@ export const navigationConfig: NavigationSection[] = [
         title: 'Rooms',
         href: '/rooms',
         icon: MessageSquare,
-        pageContexts: ['home', 'rooms', 'marketplace', 'how_it_works'],
-        requiredAuth: 'public'
-      },
-      {
-        title: 'Marketplace',
-        href: '/marketplace',
-        icon: ShoppingBag,
         pageContexts: ['home', 'rooms', 'marketplace', 'how_it_works'],
         requiredAuth: 'public'
       },
@@ -220,12 +213,6 @@ export const marketingNavItems: NavigationItem[] = [
     requiredAuth: 'public'
   },
   {
-    title: 'Marketplace',
-    href: '/marketplace',
-    icon: ShoppingBag,
-    requiredAuth: 'public'
-  },
-  {
     title: 'How It Works',
     href: '/how-it-works',
     icon: HelpCircle,
@@ -235,18 +222,6 @@ export const marketingNavItems: NavigationItem[] = [
 
 // Auth CTAs for marketing layout
 export const authCTAItems: NavigationItem[] = [
-  {
-    title: 'Log In',
-    href: '/login',
-    icon: User,
-    requiredAuth: 'public'
-  },
-  {
-    title: 'Sign Up',
-    href: '/register',
-    icon: UserCheck,
-    requiredAuth: 'public'
-  },
   {
     title: 'Dashboard',
     href: '/dashboard',

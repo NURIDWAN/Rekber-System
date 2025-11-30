@@ -24,6 +24,7 @@ class RoomFactory extends Factory
             'status' => fake()->randomElement(['free', 'in_use']),
             'created_at' => now(),
             'updated_at' => now(),
+            'expires_at' => now()->addDays(3),
         ];
     }
 
@@ -32,7 +33,7 @@ class RoomFactory extends Factory
      */
     public function free(): static
     {
-        return $this->state(fn (array $attributes) => [
+        return $this->state(fn(array $attributes) => [
             'status' => 'free',
         ]);
     }
@@ -42,7 +43,7 @@ class RoomFactory extends Factory
      */
     public function inUse(): static
     {
-        return $this->state(fn (array $attributes) => [
+        return $this->state(fn(array $attributes) => [
             'status' => 'in_use',
         ]);
     }
@@ -52,7 +53,7 @@ class RoomFactory extends Factory
      */
     public function withRoomNumber(int $roomNumber): static
     {
-        return $this->state(fn (array $attributes) => [
+        return $this->state(fn(array $attributes) => [
             'room_number' => $roomNumber,
         ]);
     }

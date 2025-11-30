@@ -1,377 +1,273 @@
-import React, { useState } from 'react'
-import { Head, Link } from '@inertiajs/react'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { useState } from 'react'
+import { Head, Link, router } from '@inertiajs/react'
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import AppLayout from '@/layouts/app-layout'
-import { dashboard } from '@/routes'
-import { type BreadcrumbItem } from '@/types'
+import { getRoomUrl } from '@/lib/roomUrlUtils'
+import { ShareUrlModal } from '@/components/ShareUrlModal'
+import { cn } from '@/lib/utils'
 import {
-  Activity,
+  Package,
   CheckCircle,
   Clock,
   AlertTriangle,
   Eye,
+  Share,
+  Search,
   RefreshCw,
-  TrendingUp,
-  Package,
-  Shield,
+  Filter,
   Users,
-  ArrowUpRight,
-  ArrowDownRight,
-  FileText,
-  Timer,
-  MessageSquare,
-  UserPlus,
-  Settings,
-  Trash2,
-  Edit
+  Activity,
+  LogIn,
+  Trash2
 } from 'lucide-react'
-
-interface RoomUser {
-  id: number
-  name: string
-  role: 'buyer' | 'seller'
-  is_online: boolean
-  joined_at: string
-  last_seen: string
-}
-
-interface Room {
-  id: number
-  room_number: string
-  status: 'free' | 'in_use'
-  created_at: string
-  updated_at: string
-  has_buyer: boolean
-  has_seller: boolean
-  is_available_for_buyer: boolean
-  is_available_for_seller: boolean
-  participants: string[]
-  users: RoomUser[]
-  message_count: number
-  last_message?: any
-  activity_count: number
-  last_activity?: any
-}
+import { Room } from '@/types'
 
 interface RoomManagementProps {
   rooms: Room[]
   stats: {
-    total_rooms: number
+    totalRooms: number
     free_rooms: number
     in_use_rooms: number
     active_users: number
   }
 }
 
-const breadcrumbs: BreadcrumbItem[] = [
+const breadcrumbs = [
   { title: 'Dashboard', href: '/dashboard' },
   { title: 'Room Management', href: '/gm/rooms' }
 ]
 
 export default function RoomManagement({ rooms, stats }: RoomManagementProps) {
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null)
+  const [shareModalOpen, setShareModalOpen] = useState(false)
+  const [shareModalRoom, setShareModalRoom] = useState<Room | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+
+  const handleShareRoom = (room: Room) => {
+    setShareModalRoom(room)
+    setShareModalOpen(true)
+  }
 
   const getRoomStatusColor = (status: string) => {
     switch (status) {
       case 'free':
-        return 'bg-green-100 text-green-800 border-green-200'
+        return 'bg-emerald-100 text-emerald-700 border-emerald-200'
       case 'in_use':
-        return 'bg-blue-100 text-blue-800 border-blue-200'
+        return 'bg-amber-100 text-amber-700 border-amber-200'
       default:
-        return 'bg-gray-100 text-gray-800 border-gray-200'
+        return 'bg-slate-100 text-slate-700 border-slate-200'
     }
   }
 
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'free':
-        return <CheckCircle className="w-4 h-4" />
+        return <CheckCircle className="w-3.5 h-3.5" />
       case 'in_use':
-        return <Users className="w-4 h-4" />
+        return <Clock className="w-3.5 h-3.5" />
       default:
-        return <AlertTriangle className="w-4 h-4" />
+        return <AlertTriangle className="w-3.5 h-3.5" />
     }
   }
 
-  const getRoleColor = (role: string) => {
-    switch (role) {
-      case 'buyer':
-        return 'bg-blue-100 text-blue-800'
-      case 'seller':
-        return 'bg-orange-100 text-orange-800'
-      default:
-        return 'bg-gray-100 text-gray-800'
-    }
-  }
-
-  const formatDateTime = (dateString: string) => {
-    return new Date(dateString).toLocaleString('id-ID', {
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    })
-  }
-
-  const handleRefresh = () => {
-    window.location.reload()
-  }
+  const filteredRooms = rooms.filter(room =>
+    room.room_number.toString().includes(searchQuery) ||
+    room.buyer?.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    room.seller?.name.toLowerCase().includes(searchQuery.toLowerCase())
+  )
 
   return (
     <AppLayout breadcrumbs={breadcrumbs}>
       <Head title="Room Management - Rekber System" />
 
-      {/* Header Section */}
-      <div className="mb-6">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-4">
-            <Shield className="w-8 h-8 text-purple-600" />
+      <div className="min-h-screen bg-slate-50/50 p-6">
+        <div className="max-w-7xl mx-auto space-y-6">
+
+          {/* Header */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div>
-              <h1 className="text-2xl font-semibold text-gray-900">Room Management</h1>
-              <p className="text-sm text-gray-500">Kelola dan monitor semua ruang transaksi</p>
+              <h1 className="text-2xl font-bold tracking-tight text-slate-900">Room Management</h1>
+              <p className="text-slate-500">Monitor and manage all active transaction rooms.</p>
             </div>
-          </div>
-          <div className="flex items-center space-x-3">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleRefresh}
-              className="flex items-center space-x-2"
-            >
-              <RefreshCw className="w-4 h-4" />
-              <span>Refresh</span>
-            </Button>
-            <Link href={dashboard()}>
-              <Button variant="outline" size="sm">
-                Back to Dashboard
-              </Button>
-            </Link>
-          </div>
-        </div>
-      </div>
-
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Total Rooms</p>
-                <p className="text-2xl font-bold text-gray-900">{stats.total_rooms}</p>
-              </div>
-              <div className="p-3 bg-purple-100 rounded-lg">
-                <Package className="w-6 h-6 text-purple-600" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Free Rooms</p>
-                <p className="text-2xl font-bold text-green-600">{stats.free_rooms}</p>
-              </div>
-              <div className="p-3 bg-green-100 rounded-lg">
-                <CheckCircle className="w-6 h-6 text-green-600" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">In Use</p>
-                <p className="text-2xl font-bold text-blue-600">{stats.in_use_rooms}</p>
-              </div>
-              <div className="p-3 bg-blue-100 rounded-lg">
-                <Users className="w-6 h-6 text-blue-600" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Active Users</p>
-                <p className="text-2xl font-bold text-orange-600">{stats.active_users}</p>
-              </div>
-              <div className="p-3 bg-orange-100 rounded-lg">
-                <Activity className="w-6 h-6 text-orange-600" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Rooms Table */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center space-x-2">
-            <Users className="w-5 h-5" />
-            <span>All Rooms</span>
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b">
-                  <th className="text-left p-3 font-medium text-gray-900">Room</th>
-                  <th className="text-left p-3 font-medium text-gray-900">Status</th>
-                  <th className="text-left p-3 font-medium text-gray-900">Participants</th>
-                  <th className="text-left p-3 font-medium text-gray-900">Messages</th>
-                  <th className="text-left p-3 font-medium text-gray-900">Activity</th>
-                  <th className="text-left p-3 font-medium text-gray-900">Last Updated</th>
-                  <th className="text-left p-3 font-medium text-gray-900">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rooms.map((room) => (
-                  <tr key={room.id} className="border-b hover:bg-gray-50">
-                    <td className="p-3">
-                      <div className="flex items-center space-x-3">
-                        <div className="font-medium text-gray-900">#{room.room_number}</div>
-                      </div>
-                    </td>
-                    <td className="p-3">
-                      <Badge className={`${getRoomStatusColor(room.status)} flex items-center space-x-1 w-fit`}>
-                        {getStatusIcon(room.status)}
-                        <span className="capitalize">{room.status.replace('_', ' ')}</span>
-                      </Badge>
-                    </td>
-                    <td className="p-3">
-                      <div className="space-y-1">
-                        {room.users.map((user) => (
-                          <div key={user.id} className="flex items-center space-x-2">
-                            <Badge className={`${getRoleColor(user.role)} text-xs`}>
-                              {user.role}
-                            </Badge>
-                            <span className="text-sm text-gray-700">{user.name}</span>
-                            {user.is_online && (
-                              <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                            )}
-                          </div>
-                        ))}
-                        {room.users.length === 0 && (
-                          <span className="text-sm text-gray-500">No participants</span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="p-3">
-                      <div className="flex items-center space-x-2">
-                        <MessageSquare className="w-4 h-4 text-gray-400" />
-                        <span className="text-sm text-gray-700">{room.message_count}</span>
-                      </div>
-                    </td>
-                    <td className="p-3">
-                      <div className="flex items-center space-x-2">
-                        <Activity className="w-4 h-4 text-gray-400" />
-                        <span className="text-sm text-gray-700">{room.activity_count}</span>
-                      </div>
-                    </td>
-                    <td className="p-3">
-                      <span className="text-sm text-gray-500">
-                        {formatDateTime(room.updated_at)}
-                      </span>
-                    </td>
-                    <td className="p-3">
-                      <div className="flex items-center space-x-2">
-                        <Link href={`/rooms/${room.id}`}>
-                          <Button variant="outline" size="sm" title="View Room">
-                            <Eye className="w-4 h-4" />
-                          </Button>
-                        </Link>
-                        <Link href={`/rooms/${room.id}/invitations`}>
-                          <Button variant="outline" size="sm" title="Manage Invitations">
-                            <UserPlus className="w-4 h-4" />
-                          </Button>
-                        </Link>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          title="Room Details"
-                          onClick={() => setSelectedRoom(room)}
-                        >
-                          <Settings className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-
-            {rooms.length === 0 && (
-              <div className="text-center py-8">
-                <Package className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-                <p className="text-gray-500">No rooms found</p>
-              </div>
-            )}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Selected Room Details Modal (if needed) */}
-      {selectedRoom && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-2xl w-full max-h-[80vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-bold">Room #{selectedRoom.room_number} Details</h2>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setSelectedRoom(null)}
-              >
-                ×
+            <div className="flex items-center gap-2">
+              <Button variant="outline" onClick={() => window.location.reload()}>
+                <RefreshCw className="mr-2 h-4 w-4" />
+                Refresh
               </Button>
             </div>
+          </div>
 
-            <div className="space-y-4">
-              <div>
-                <h3 className="font-semibold mb-2">Participants</h3>
-                {selectedRoom.users.map((user) => (
-                  <div key={user.id} className="flex items-center justify-between p-2 border rounded">
-                    <div className="flex items-center space-x-2">
-                      <Badge className={getRoleColor(user.role)}>
-                        {user.role}
-                      </Badge>
-                      <span>{user.name}</span>
-                      {user.is_online && (
-                        <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                      )}
-                    </div>
-                    <span className="text-sm text-gray-500">
-                      Joined: {formatDateTime(user.joined_at)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-
-              <div>
-                <h3 className="font-semibold mb-2">Activity Summary</h3>
-                <div className="grid grid-cols-2 gap-4">
+          {/* Stats Overview */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <Card className="border-slate-200 shadow-sm">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm text-gray-600">Total Messages</p>
-                    <p className="font-semibold">{selectedRoom.message_count}</p>
+                    <p className="text-sm font-medium text-slate-500">Total Rooms</p>
+                    <p className="text-2xl font-bold text-slate-900">{stats.totalRooms || rooms.length}</p>
                   </div>
-                  <div>
-                    <p className="text-sm text-gray-600">Activity Count</p>
-                    <p className="font-semibold">{selectedRoom.activity_count}</p>
+                  <div className="p-3 bg-slate-100 rounded-lg">
+                    <Package className="w-5 h-5 text-slate-600" />
                   </div>
                 </div>
-              </div>
-            </div>
+              </CardContent>
+            </Card>
+            <Card className="border-slate-200 shadow-sm">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-slate-500">Active Rooms</p>
+                    <p className="text-2xl font-bold text-amber-600">{stats.in_use_rooms}</p>
+                  </div>
+                  <div className="p-3 bg-amber-100 rounded-lg">
+                    <Clock className="w-5 h-5 text-amber-600" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card className="border-slate-200 shadow-sm">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-slate-500">Available</p>
+                    <p className="text-2xl font-bold text-emerald-600">{stats.free_rooms}</p>
+                  </div>
+                  <div className="p-3 bg-emerald-100 rounded-lg">
+                    <CheckCircle className="w-5 h-5 text-emerald-600" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card className="border-slate-200 shadow-sm">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-slate-500">Active Users</p>
+                    <p className="text-2xl font-bold text-blue-600">{stats.active_users}</p>
+                  </div>
+                  <div className="p-3 bg-blue-100 rounded-lg">
+                    <Users className="w-5 h-5 text-blue-600" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
           </div>
+
+          {/* Main Content */}
+          <Card className="border-slate-200 shadow-sm">
+            <CardHeader>
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <CardTitle className="text-lg font-medium">All Rooms</CardTitle>
+                  <CardDescription>View and manage room details</CardDescription>
+                </div>
+                <div className="relative w-full md:w-64">
+                  <Search className="absolute left-2 top-2.5 h-4 w-4 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Search rooms..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full rounded-md border border-slate-300 pl-8 py-2 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+                  />
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                {filteredRooms.map((room) => (
+                  <Card
+                    key={room.id}
+                    className={cn(
+                      "transition-all hover:shadow-md cursor-pointer border-slate-200",
+                      selectedRoom?.id === room.id && "ring-2 ring-slate-900"
+                    )}
+                    onClick={() => setSelectedRoom(room)}
+                  >
+                    <CardContent className="p-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <h3 className="font-semibold text-slate-900">Room #{room.room_number}</h3>
+                        <Badge variant="secondary" className={getRoomStatusColor(room.status)}>
+                          {getStatusIcon(room.status)}
+                          <span className="ml-1.5 capitalize">{room.status.replace('_', ' ')}</span>
+                        </Badge>
+                      </div>
+
+                      <div className="space-y-2 mb-4">
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-slate-500">Buyer</span>
+                          <span className="font-medium text-slate-900 truncate max-w-[100px]">{room.buyer?.name || '—'}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-slate-500">Seller</span>
+                          <span className="font-medium text-slate-900 truncate max-w-[100px]">{room.seller?.name || '—'}</span>
+                        </div>
+                      </div>
+
+                      <div className="flex gap-2 pt-2 border-t border-slate-100">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="flex-1 h-8 text-slate-600 hover:text-blue-600 hover:bg-blue-50"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            router.post(`/gm/rooms/${room.id}/join`)
+                          }}
+                        >
+                          <LogIn className="w-3.5 h-3.5 mr-1.5" />
+                          Join
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
+                          title="Reset Room"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            if (confirm('Are you sure you want to reset this room? This will clear all sessions, messages, and transactions.')) {
+                              router.post(`/gm/rooms/${room.id}/reset`)
+                            }
+                          }}
+                        >
+                          <RefreshCw className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0 text-slate-600"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleShareRoom(room)
+                          }}
+                        >
+                          <Share className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+              {filteredRooms.length === 0 && (
+                <div className="text-center py-12 text-slate-500">
+                  <Package className="h-12 w-12 mx-auto mb-4 text-slate-300" />
+                  <p>No rooms found matching your search.</p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </div>
+      </div>
+
+      {/* Share URL Modal */}
+      {shareModalRoom && (
+        <ShareUrlModal
+          roomId={shareModalRoom.id}
+          roomNumber={shareModalRoom.room_number}
+          isOpen={shareModalOpen}
+          onOpenChange={setShareModalOpen}
+        />
       )}
     </AppLayout>
   )

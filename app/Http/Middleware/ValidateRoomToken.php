@@ -36,15 +36,36 @@ class ValidateRoomToken
             ], 400);
         }
 
+        // Check if room is expired
+        $room = \App\Models\Room::find($decrypted['room_id']);
+        if (!$room || $room->isExpired()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'This room has expired',
+            ], 410);
+        }
+
         // Enforce optional PIN if present
         if (!empty($decrypted['pin'])) {
-            $providedPin = $request->get('pin');
-            if (!$providedPin || $providedPin !== $decrypted['pin']) {
+            $key = 'pin_attempt:' . md5($token) . ':' . $request->ip();
+
+            if (\Illuminate\Support\Facades\RateLimiter::tooManyAttempts($key, 5)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'PIN is required for this link',
+                    'message' => 'Too many PIN attempts. Please try again in 1 minute.',
+                ], 429);
+            }
+
+            $providedPin = $request->get('pin');
+            if (!$providedPin || $providedPin !== $decrypted['pin']) {
+                \Illuminate\Support\Facades\RateLimiter::hit($key, 60);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Invalid PIN',
                 ], 403);
             }
+
+            \Illuminate\Support\Facades\RateLimiter::clear($key);
         }
 
         // Add decrypted data to request for later use

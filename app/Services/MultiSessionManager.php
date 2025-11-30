@@ -101,6 +101,32 @@ class MultiSessionManager
             ] : null
         ];
 
+        // 1. Check if user has an ACTIVE session in ANY OTHER room
+        // "Active" means:
+        // - User is a participant (RoomUser exists)
+        // - Room is NOT completed
+        // - Room is NOT expired
+        $otherActiveSession = RoomUser::where('user_identifier', $userIdentifier)
+            ->where('room_id', '!=', $roomId)
+            ->whereHas('room', function ($query) {
+                $query->where('status', '!=', 'completed')
+                    ->where(function ($q) {
+                        $q->whereNull('expires_at')
+                            ->orWhere('expires_at', '>', now());
+                    });
+            })
+            ->with('room')
+            ->first();
+
+        if ($otherActiveSession) {
+            $result['can_join'] = false;
+            $result['reason'] = 'You have an active session in another room (' . $otherActiveSession->room->room_number . ')';
+            $result['suggested_action'] = 'redirect_to_active';
+            $result['active_room_id'] = $otherActiveSession->room_id;
+            $result['active_room_number'] = $otherActiveSession->room->room_number;
+            return $result;
+        }
+
         // Check if user already has a session in this room
         if ($existingUserSession) {
             if ($existingUserSession->role === $role) {

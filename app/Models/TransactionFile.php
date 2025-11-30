@@ -66,7 +66,11 @@ class TransactionFile extends Model
      */
     public function getFileUrlAttribute(): string
     {
-        return Storage::url($this->file_path);
+        // Use the secure download route
+        $roomUrlService = app(\App\Services\RoomUrlService::class);
+        $encryptedRoomId = $roomUrlService->encryptRoomId($this->room_id);
+
+        return route('rooms.files.download', ['room' => $encryptedRoomId, 'file' => $this->id]);
     }
 
     /**

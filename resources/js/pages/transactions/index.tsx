@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react'
-import { Head, Link } from '@inertiajs/react'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Head, Link, router } from '@inertiajs/react'
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Switch } from '@/components/ui/switch'
-import { Label } from '@/components/ui/label'
+import AppLayout from '@/layouts/app-layout'
+import { cn } from '@/lib/utils'
 import {
   FileText,
   CreditCard,
@@ -15,22 +15,16 @@ import {
   AlertCircle,
   Eye,
   Clock,
-  Users,
-  TrendingUp,
   ArrowRight,
   RefreshCw,
-  Wifi,
-  WifiOff,
-  Settings,
-  Globe,
-  Zap,
-  Activity,
-  Filter
+  Search,
+  Filter,
+  DollarSign,
+  AlertTriangle
 } from 'lucide-react'
-import { router } from '@inertiajs/react'
-import transactionAPI, { TransactionDetails, TransactionFile } from '@/services/transaction-api'
 import transactionWebSocket, { TransactionUpdateEvent, FileVerificationEvent } from '@/services/transaction-websocket'
 
+// Interfaces
 interface Transaction {
   id: number
   transaction_number: string
@@ -41,12 +35,8 @@ interface Transaction {
     id: number
     room_number: number
   }
-  buyer?: {
-    name: string
-  }
-  seller?: {
-    name: string
-  }
+  buyer?: { name: string }
+  seller?: { name: string }
   files: Array<{
     id: number
     file_type: string
@@ -88,516 +78,277 @@ interface PageProps {
   stats: VerificationStats
 }
 
-// Translations
-const translations = {
-  id: {
-    title: 'Manajemen Transaksi',
-    subtitle: 'Kelola verifikasi pembayaran dan pengiriman untuk semua transaksi',
-    pendingPayment: 'Verifikasi Pembayaran',
-    pendingShipping: 'Verifikasi Pengiriman',
-    pendingFunds: 'Rilis Dana',
-    pendingFiles: 'Total File Pending',
-    totalTransactions: 'Total Transaksi',
-    activeTransactions: 'Transaksi Aktif',
-    completedTransactions: 'Transaksi Selesai',
-    disputedTransactions: 'Transaksi Dispute',
-    waitingVerification: 'Menunggu verifikasi',
-    pending: 'Pending',
-    verified: 'Terverifikasi',
-    rejected: 'Ditolak',
-    paid: 'Dibayar',
-    shipped: 'Dikirim',
-    noData: 'Tidak Ada Data',
-    noPending: 'Tidak Ada Transaksi Pending',
-    allVerified: 'Semua transaksi sudah terverifikasi',
-    refresh: 'Refresh',
-    detail: 'Detail',
-    transactionDetail: 'Detail Transaksi',
-    connectionStatus: 'Status Koneksi',
-    realTimeUpdates: 'Update Real-time',
-    view: 'Lihat',
-    showAdvanced: 'Tampilkan Fitur Lanjutan',
-    transactionsTab: 'Transaksi Pending',
-    filesTab: 'File Pending',
-    buyer: 'Pembeli',
-    seller: 'Penjual',
-    room: 'Ruang',
-    uploadedAt: 'Diunggah',
-    waitingText: 'Menunggu'
-  },
-  en: {
-    title: 'Transaction Management',
-    subtitle: 'Manage payment and shipping verification for all transactions',
-    pendingPayment: 'Payment Verification',
-    pendingShipping: 'Shipping Verification',
-    pendingFunds: 'Fund Release',
-    pendingFiles: 'Total Pending Files',
-    totalTransactions: 'Total Transactions',
-    activeTransactions: 'Active Transactions',
-    completedTransactions: 'Completed Transactions',
-    disputedTransactions: 'Disputed Transactions',
-    waitingVerification: 'Waiting verification',
-    pending: 'Pending',
-    verified: 'Verified',
-    rejected: 'Rejected',
-    paid: 'Paid',
-    shipped: 'Shipped',
-    noData: 'No Data',
-    noPending: 'No Pending Transactions',
-    allVerified: 'All transactions are verified',
-    refresh: 'Refresh',
-    detail: 'Detail',
-    transactionDetail: 'Transaction Detail',
-    connectionStatus: 'Connection Status',
-    realTimeUpdates: 'Real-time Updates',
-    view: 'View',
-    showAdvanced: 'Show Advanced Features',
-    transactionsTab: 'Pending Transactions',
-    filesTab: 'Pending Files',
-    buyer: 'Buyer',
-    seller: 'Seller',
-    room: 'Room',
-    uploadedAt: 'Uploaded',
-    waitingText: 'Waiting'
-  }
-}
+const breadcrumbs = [
+  { title: 'Dashboard', href: '/dashboard' },
+  { title: 'Transactions', href: '/gm/transactions' }
+]
 
-export default function UnifiedTransactionManagement({ pendingTransactions, pendingFiles, stats }: PageProps) {
-  const [language, setLanguage] = useState<'id' | 'en'>('id')
+export default function TransactionManagement({ pendingTransactions, pendingFiles, stats }: PageProps) {
   const [isLoading, setIsLoading] = useState(false)
-  const [isAdvancedMode, setIsAdvancedMode] = useState(false)
-  const [isConnected, setIsConnected] = useState(false)
-  const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
-  const [realtimeUpdates, setRealtimeUpdates] = useState<string[]>([])
-
-  const t = translations[language]
+  const [searchQuery, setSearchQuery] = useState('')
 
   useEffect(() => {
-    // Setup WebSocket for real-time updates
-    setupWebSocketListeners()
-
-    // Set connection status checker
-    const connectionChecker = setInterval(() => {
-      setIsConnected(transactionWebSocket.getConnectionStatus())
-    }, 5000)
-
-    return () => {
-      connectionChecker && clearInterval(connectionChecker)
-      transactionWebSocket.cleanup()
-    }
-  }, [])
-
-  const setupWebSocketListeners = () => {
-    // Listen to transaction updates
     const unsubscribeTransaction = transactionWebSocket.onTransactionUpdate(
-      (event: TransactionUpdateEvent) => {
-        console.log('Transaction update received:', event)
-        setLastUpdate(new Date())
-        setIsConnected(true)
-
-        // Add to update log
-        setRealtimeUpdates(prev => [
-          ...prev.slice(-2), // Keep only last 3 updates
-          `[${new Date().toLocaleTimeString()}] ${event.event_type}: ${event.transaction.transaction_number}`
-        ])
-
-        // Refresh data periodically for now
-        setTimeout(() => {
-          refreshData()
-        }, 1000)
-      },
+      () => refreshData(),
       'all'
     )
-
-    // Listen to file verification updates
     const unsubscribeFile = transactionWebSocket.onFileVerificationUpdate(
-      (event: FileVerificationEvent) => {
-        console.log('File verification update received:', event)
-        setLastUpdate(new Date())
-        setIsConnected(true)
-
-        setRealtimeUpdates(prev => [
-          ...prev.slice(-2),
-          `[${new Date().toLocaleTimeString()}] File ${event.action}: ${event.file.file_name}`
-        ])
-
-        setTimeout(() => {
-          refreshData()
-        }, 1000)
-      },
+      () => refreshData(),
       'all'
     )
 
     return () => {
       unsubscribeTransaction()
       unsubscribeFile()
+      transactionWebSocket.cleanup()
     }
-  }
-
-  const getStatusBadge = (status: string) => {
-    const statusConfig = {
-      'awaiting_payment_verification': {
-        label: language === 'id' ? 'Verifikasi Pembayaran' : 'Payment Verification',
-        variant: 'destructive' as const,
-        icon: Clock
-      },
-      'awaiting_shipping_verification': {
-        label: language === 'id' ? 'Verifikasi Pengiriman' : 'Shipping Verification',
-        variant: 'destructive' as const,
-        icon: Truck
-      },
-      'paid': { label: t.paid, variant: 'default' as const, icon: CheckCircle },
-      'shipped': { label: t.shipped, variant: 'default' as const, icon: Package },
-      'pending': { label: t.pending, variant: 'destructive' as const, icon: Clock },
-      'verified': { label: t.verified, variant: 'default' as const, icon: CheckCircle },
-      'rejected': { label: t.rejected, variant: 'destructive' as const, icon: AlertCircle },
-    }
-
-    const config = statusConfig[status as keyof typeof statusConfig] || {
-      label: status,
-      variant: 'default' as const,
-      icon: FileText
-    }
-    const Icon = config.icon
-
-    return (
-      <Badge variant={config.variant} className="flex items-center gap-1">
-        <Icon className="w-3 h-3" />
-        {config.label}
-      </Badge>
-    )
-  }
-
-  const getFileTypeIcon = (fileType: string) => {
-    switch (fileType) {
-      case 'payment_proof': return <CreditCard className="w-4 h-4" />
-      case 'shipping_receipt': return <Truck className="w-4 h-4" />
-      default: return <FileText className="w-4 h-4" />
-    }
-  }
+  }, [])
 
   const refreshData = () => {
     setIsLoading(true)
     router.reload({
       only: ['pendingTransactions', 'pendingFiles', 'stats'],
-      onSuccess: () => setIsLoading(false),
       onFinish: () => setIsLoading(false)
     })
   }
 
-  const getAdvancedStats = () => {
-    if (!isAdvancedMode) return []
+  const getStatusBadge = (status: string) => {
+    const styles = {
+      awaiting_payment_verification: "bg-amber-100 text-amber-700 border-amber-200",
+      awaiting_shipping_verification: "bg-blue-100 text-blue-700 border-blue-200",
+      paid: "bg-emerald-100 text-emerald-700 border-emerald-200",
+      shipped: "bg-indigo-100 text-indigo-700 border-indigo-200",
+      completed: "bg-green-100 text-green-700 border-green-200",
+      disputed: "bg-red-100 text-red-700 border-red-200",
+      cancelled: "bg-slate-100 text-slate-700 border-slate-200"
+    }
 
-    return [
-      {
-        title: t.totalTransactions,
-        value: stats.total_transactions,
-        icon: Package,
-        color: 'text-gray-600'
-      },
-      {
-        title: t.activeTransactions,
-        value: stats.active_transactions,
-        icon: Activity,
-        color: 'text-blue-600'
-      },
-      {
-        title: t.completedTransactions,
-        value: stats.completed_transactions,
-        icon: CheckCircle,
-        color: 'text-green-600'
-      },
-      {
-        title: t.disputedTransactions,
-        value: stats.disputed_transactions,
-        icon: AlertCircle,
-        color: 'text-red-600'
-      }
-    ]
+    const labels = {
+      awaiting_payment_verification: "Verify Payment",
+      awaiting_shipping_verification: "Verify Shipping",
+      paid: "Paid",
+      shipped: "Shipped",
+      completed: "Completed",
+      disputed: "Disputed",
+      cancelled: "Cancelled"
+    }
+
+    return (
+      <Badge variant="outline" className={cn("font-medium", styles[status as keyof typeof styles] || "bg-gray-100")}>
+        {labels[status as keyof typeof labels] || status.replace(/_/g, ' ')}
+      </Badge>
+    )
   }
 
+  const filteredTransactions = pendingTransactions.filter(t =>
+    t.transaction_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    t.buyer?.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    t.seller?.name.toLowerCase().includes(searchQuery.toLowerCase())
+  )
+
   return (
-    <>
-      <Head title={t.title} />
+    <AppLayout breadcrumbs={breadcrumbs}>
+      <Head title="Transaction Management - Rekber System" />
 
-      <div className="min-h-screen bg-gray-50 py-8">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div className="min-h-screen bg-slate-50/50 p-6">
+        <div className="max-w-7xl mx-auto space-y-6">
+
           {/* Header */}
-          <div className="mb-8">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h1 className="text-3xl font-bold text-gray-900">{t.title}</h1>
-                <p className="text-gray-600 mt-2">{t.subtitle}</p>
-              </div>
-              <div className="flex items-center gap-4">
-                {/* Language Toggle */}
-                <div className="flex items-center gap-2 bg-white rounded-lg border p-2">
-                  <Globe className="w-4 h-4 text-gray-600" />
-                  <Button
-                    variant={language === 'id' ? 'default' : 'ghost'}
-                    size="sm"
-                    onClick={() => setLanguage('id')}
-                  >
-                    ID
-                  </Button>
-                  <Button
-                    variant={language === 'en' ? 'default' : 'ghost'}
-                    size="sm"
-                    onClick={() => setLanguage('en')}
-                  >
-                    EN
-                  </Button>
-                </div>
-
-                {/* Advanced Mode Toggle */}
-                <div className="flex items-center gap-2 bg-white rounded-lg border p-2">
-                  <Settings className="w-4 h-4 text-gray-600" />
-                  <Label htmlFor="advanced-mode" className="text-sm">
-                    {t.showAdvanced}
-                  </Label>
-                  <Switch
-                    id="advanced-mode"
-                    checked={isAdvancedMode}
-                    onCheckedChange={setIsAdvancedMode}
-                  />
-                </div>
-
-                {/* Real-time Status */}
-                <div className="flex items-center gap-2 bg-white rounded-lg border p-2">
-                  {isConnected ? (
-                    <Wifi className="w-4 h-4 text-green-600" />
-                  ) : (
-                    <WifiOff className="w-4 h-4 text-red-600" />
-                  )}
-                  <span className="text-sm text-gray-600">
-                    {t.connectionStatus}
-                  </span>
-                </div>
-
-                {/* Refresh Button */}
-                <Button
-                  onClick={refreshData}
-                  disabled={isLoading}
-                  variant="outline"
-                  className="flex items-center gap-2"
-                >
-                  <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
-                  {t.refresh}
-                </Button>
-              </div>
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight text-slate-900">Transaction Management</h1>
+              <p className="text-slate-500">Manage verification queues and monitor transaction flows.</p>
             </div>
-
-            {/* Real-time Updates Log */}
-            {isAdvancedMode && realtimeUpdates.length > 0 && (
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-6">
-                <div className="flex items-center gap-2 text-blue-900 mb-2">
-                  <Zap className="w-4 h-4" />
-                  <span className="font-medium text-sm">{t.realTimeUpdates}</span>
-                  {lastUpdate && (
-                    <span className="text-xs text-blue-700">
-                      (Last: {lastUpdate.toLocaleTimeString()})
-                    </span>
-                  )}
-                </div>
-                <div className="space-y-1">
-                  {realtimeUpdates.map((update, index) => (
-                    <div key={index} className="text-xs text-blue-800 font-mono">
-                      {update}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+            <div className="flex items-center gap-2">
+              <Button variant="outline" onClick={refreshData} disabled={isLoading}>
+                <RefreshCw className={cn("mr-2 h-4 w-4", isLoading && "animate-spin")} />
+                Refresh
+              </Button>
+            </div>
           </div>
 
           {/* Stats Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">{t.pendingPayment}</CardTitle>
-                <CreditCard className="h-4 w-4 text-red-600" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-red-600">{stats.pending_payment_verification}</div>
-                <p className="text-xs text-muted-foreground">{t.waitingVerification}</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <Card className="border-slate-200 shadow-sm">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-slate-500">Pending Payment</p>
+                    <p className="text-2xl font-bold text-amber-600">{stats.pending_payment_verification}</p>
+                  </div>
+                  <div className="p-3 bg-amber-100 rounded-lg">
+                    <CreditCard className="w-5 h-5 text-amber-600" />
+                  </div>
+                </div>
               </CardContent>
             </Card>
 
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">{t.pendingShipping}</CardTitle>
-                <Truck className="h-4 w-4 text-orange-600" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-orange-600">{stats.pending_shipping_verification}</div>
-                <p className="text-xs text-muted-foreground">{t.waitingVerification}</p>
+            <Card className="border-slate-200 shadow-sm">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-slate-500">Pending Shipping</p>
+                    <p className="text-2xl font-bold text-blue-600">{stats.pending_shipping_verification}</p>
+                  </div>
+                  <div className="p-3 bg-blue-100 rounded-lg">
+                    <Truck className="w-5 h-5 text-blue-600" />
+                  </div>
+                </div>
               </CardContent>
             </Card>
 
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">{t.pendingFunds}</CardTitle>
-                <TrendingUp className="h-4 w-4 text-blue-600" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-blue-600">{stats.pending_fund_release}</div>
-                <p className="text-xs text-muted-foreground">{t.waitingText}</p>
+            <Card className="border-slate-200 shadow-sm">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-slate-500">Pending Release</p>
+                    <p className="text-2xl font-bold text-emerald-600">{stats.pending_fund_release}</p>
+                  </div>
+                  <div className="p-3 bg-emerald-100 rounded-lg">
+                    <DollarSign className="w-5 h-5 text-emerald-600" />
+                  </div>
+                </div>
               </CardContent>
             </Card>
 
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">{t.pendingFiles}</CardTitle>
-                <FileText className="h-4 w-4 text-purple-600" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-purple-600">{stats.total_pending_files}</div>
-                <p className="text-xs text-muted-foreground">{t.waitingVerification}</p>
+            <Card className="border-slate-200 shadow-sm">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-slate-500">Disputed</p>
+                    <p className="text-2xl font-bold text-red-600">{stats.disputed_transactions}</p>
+                  </div>
+                  <div className="p-3 bg-red-100 rounded-lg">
+                    <AlertTriangle className="w-5 h-5 text-red-600" />
+                  </div>
+                </div>
               </CardContent>
             </Card>
           </div>
 
-          {/* Advanced Stats */}
-          {isAdvancedMode && (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-              {getAdvancedStats().map((stat, index) => {
-                const Icon = stat.icon
-                return (
-                  <Card key={index}>
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                      <CardTitle className="text-sm font-medium">{stat.title}</CardTitle>
-                      <Icon className={`h-4 w-4 ${stat.color}`} />
-                    </CardHeader>
-                    <CardContent>
-                      <div className={`text-2xl font-bold ${stat.color}`}>{stat.value}</div>
-                      <p className="text-xs text-muted-foreground">{t.waitingText}</p>
-                    </CardContent>
-                  </Card>
-                )
-              })}
-            </div>
-          )}
-
           {/* Main Content */}
           <Tabs defaultValue="transactions" className="space-y-6">
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="transactions" className="flex items-center gap-2">
-                <Package className="w-4 h-4" />
-                {t.transactionsTab}
+            <TabsList className="bg-white border border-slate-200 p-1">
+              <TabsTrigger value="transactions" className="data-[state=active]:bg-slate-100">
+                Pending Transactions
+                {pendingTransactions.length > 0 && (
+                  <Badge variant="secondary" className="ml-2 bg-slate-200 text-slate-700">{pendingTransactions.length}</Badge>
+                )}
               </TabsTrigger>
-              <TabsTrigger value="files" className="flex items-center gap-2">
-                <FileText className="w-4 h-4" />
-                {t.filesTab}
+              <TabsTrigger value="files" className="data-[state=active]:bg-slate-100">
+                Pending Files
+                {pendingFiles.length > 0 && (
+                  <Badge variant="secondary" className="ml-2 bg-slate-200 text-slate-700">{pendingFiles.length}</Badge>
+                )}
               </TabsTrigger>
             </TabsList>
 
-            {/* Transactions Tab */}
-            <TabsContent value="transactions">
-              <Card>
+            <TabsContent value="transactions" className="space-y-4">
+              <Card className="border-slate-200 shadow-sm">
                 <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Package className="w-5 h-5" />
-                    {t.noPending}
-                  </CardTitle>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <CardTitle className="text-lg font-medium">Transaction Queue</CardTitle>
+                      <CardDescription>Transactions requiring your attention</CardDescription>
+                    </div>
+                    <div className="relative w-64">
+                      <Search className="absolute left-2 top-2.5 h-4 w-4 text-slate-400" />
+                      <input
+                        type="text"
+                        placeholder="Search transactions..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="w-full rounded-md border border-slate-300 pl-8 py-2 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+                      />
+                    </div>
+                  </div>
                 </CardHeader>
                 <CardContent>
-                  {pendingTransactions.length === 0 ? (
-                    <div className="text-center py-12">
-                      <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-4" />
-                      <h3 className="text-lg font-medium text-gray-900 mb-2">{t.allVerified}</h3>
-                      <p className="text-gray-500">{t.allVerified.toLowerCase()}</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-4">
-                      {pendingTransactions.map((transaction) => (
-                        <div key={transaction.id} className="border rounded-lg p-4 hover:bg-gray-50 transition-colors">
-                          <div className="flex items-center justify-between">
-                            <div className="flex-1">
-                              <div className="flex items-center gap-3 mb-2">
-                                <span className="font-medium">#{transaction.transaction_number}</span>
-                                {getStatusBadge(transaction.status)}
-                              </div>
-                              <div className="text-sm text-gray-600 space-y-1">
-                                <p>{t.room} {transaction.room.room_number} • {transaction.currency} {transaction.amount.toLocaleString()}</p>
-                                <p>{t.buyer}: {transaction.buyer?.name || 'N/A'} • {t.seller}: {transaction.seller?.name || 'N/A'}</p>
-                              </div>
+                  <div className="space-y-4">
+                    {filteredTransactions.length === 0 ? (
+                      <div className="text-center py-12 text-slate-500">
+                        <CheckCircle className="h-12 w-12 mx-auto mb-4 text-emerald-500/50" />
+                        <p className="font-medium text-slate-900">All caught up!</p>
+                        <p>No pending transactions found.</p>
+                      </div>
+                    ) : (
+                      filteredTransactions.map((transaction) => (
+                        <div key={transaction.id} className="flex items-center justify-between p-4 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-3">
+                              <span className="font-mono font-medium text-slate-900">#{transaction.transaction_number}</span>
+                              {getStatusBadge(transaction.status)}
                             </div>
-                            <Button
-                              asChild
-                              variant="outline"
-                              size="sm"
-                              className="flex items-center gap-2"
-                            >
-                              <Link href={`/transactions/${transaction.id}`}>
-                                <Eye className="w-4 h-4" />
-                                {t.detail}
-                                <ArrowRight className="w-3 h-3" />
-                              </Link>
-                            </Button>
+                            <div className="flex items-center gap-4 text-sm text-slate-500">
+                              <span>Room #{transaction.room.room_number}</span>
+                              <span>•</span>
+                              <span>{transaction.currency} {transaction.amount.toLocaleString()}</span>
+                              <span>•</span>
+                              <span>{new Date(transaction.created_at).toLocaleDateString()}</span>
+                            </div>
                           </div>
+                          <Button asChild variant="outline" size="sm">
+                            <Link href={`/transactions/${transaction.id}`}>
+                              View Details
+                              <ArrowRight className="ml-2 h-4 w-4" />
+                            </Link>
+                          </Button>
                         </div>
-                      ))}
-                    </div>
-                  )}
+                      ))
+                    )}
+                  </div>
                 </CardContent>
               </Card>
             </TabsContent>
 
-            {/* Files Tab */}
             <TabsContent value="files">
-              <Card>
+              <Card className="border-slate-200 shadow-sm">
                 <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <FileText className="w-5 h-5" />
-                    {t.filesTab}
-                  </CardTitle>
+                  <CardTitle className="text-lg font-medium">File Verification Queue</CardTitle>
+                  <CardDescription>Payment proofs and shipping receipts waiting for review</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  {pendingFiles.length === 0 ? (
-                    <div className="text-center py-12">
-                      <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-4" />
-                      <h3 className="text-lg font-medium text-gray-900 mb-2">{t.noData}</h3>
-                      <p className="text-gray-500">{t.allVerified.toLowerCase()}</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-4">
-                      {pendingFiles.map((file) => (
-                        <div key={file.id} className="border rounded-lg p-4 hover:bg-gray-50 transition-colors">
-                          <div className="flex items-center justify-between">
-                            <div className="flex-1">
-                              <div className="flex items-center gap-3 mb-2">
-                                {getFileTypeIcon(file.file_type)}
-                                <span className="font-medium">{file.file_name}</span>
-                                {getStatusBadge(file.status)}
-                              </div>
-                              <div className="text-sm text-gray-600 space-y-1">
-                                <p>{t.transactionDetail}: #{file.transaction.transaction_number} • {t.room} {file.transaction.room.room_number}</p>
-                                <p>{t.uploadedAt}: {new Date(file.created_at).toLocaleString(language === 'id' ? 'id-ID' : 'en-US')}</p>
-                              </div>
+                  <div className="space-y-4">
+                    {pendingFiles.length === 0 ? (
+                      <div className="text-center py-12 text-slate-500">
+                        <CheckCircle className="h-12 w-12 mx-auto mb-4 text-emerald-500/50" />
+                        <p className="font-medium text-slate-900">No pending files</p>
+                        <p>All uploaded files have been verified.</p>
+                      </div>
+                    ) : (
+                      pendingFiles.map((file) => (
+                        <div key={file.id} className="flex items-center justify-between p-4 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors">
+                          <div className="flex items-center gap-4">
+                            <div className="p-2 bg-slate-100 rounded-lg">
+                              {file.file_type === 'payment_proof' ? (
+                                <CreditCard className="h-5 w-5 text-slate-600" />
+                              ) : (
+                                <Truck className="h-5 w-5 text-slate-600" />
+                              )}
                             </div>
-                            <Button
-                              asChild
-                              variant="outline"
-                              size="sm"
-                              className="flex items-center gap-2"
-                            >
-                              <Link href={`/transactions/${file.transaction.id}`}>
-                                <Eye className="w-4 h-4" />
-                                {t.transactionDetail}
-                                <ArrowRight className="w-3 h-3" />
-                              </Link>
-                            </Button>
+                            <div>
+                              <p className="font-medium text-slate-900">{file.file_name}</p>
+                              <p className="text-sm text-slate-500">
+                                Transaction #{file.transaction.transaction_number} • {new Date(file.created_at).toLocaleDateString()}
+                              </p>
+                            </div>
                           </div>
+                          <Button asChild variant="outline" size="sm">
+                            <Link href={`/transactions/${file.transaction.id}`}>
+                              Verify
+                              <ArrowRight className="ml-2 h-4 w-4" />
+                            </Link>
+                          </Button>
                         </div>
-                      ))}
-                    </div>
-                  )}
+                      ))
+                    )}
+                  </div>
                 </CardContent>
               </Card>
             </TabsContent>
           </Tabs>
         </div>
       </div>
-    </>
+    </AppLayout>
   )
 }

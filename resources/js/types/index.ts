@@ -4,6 +4,8 @@ export interface Room {
   status: 'free' | 'in_use'
   created_at: string
   updated_at: string
+  buyer?: { name: string }
+  seller?: { name: string }
 }
 
 export interface RoomUser {
@@ -137,4 +139,19 @@ export interface ShareLinksResponse {
 export interface TokenJoinRequest {
   name: string
   phone: string
+}
+
+import { LucideIcon } from 'lucide-react';
+import { InertiaLinkProps } from '@inertiajs/react';
+
+export interface NavItem {
+  title: string;
+  href: string;
+  icon?: LucideIcon | null;
+  isActive?: boolean;
+}
+
+export interface BreadcrumbItem {
+  title: string;
+  href: string;
 }

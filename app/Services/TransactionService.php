@@ -180,6 +180,12 @@ class TransactionService
             // Update room status to goods_received
             $room->update(['status' => 'goods_received']);
 
+            // Update transaction status to goods_received
+            $transaction = $room->activeTransaction();
+            if ($transaction) {
+                $transaction->update(['status' => 'goods_received']);
+            }
+
             // Notify seller and GM
             $this->notifyGoodsReceived($room, $buyer);
 
@@ -358,7 +364,8 @@ class TransactionService
 
     private function calculateProgressPercentage($completedSteps, $totalSteps)
     {
-        if ($totalSteps === 0) return 0;
+        if ($totalSteps === 0)
+            return 0;
         return round((count($completedSteps) / $totalSteps) * 100);
     }
 

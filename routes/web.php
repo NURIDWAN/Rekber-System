@@ -22,6 +22,10 @@ Route::get('/', function () {
     return Inertia::render('home');
 })->name('home');
 
+Route::get('/how-it-works', function () {
+    return Inertia::render('how-it-works');
+})->name('how-it-works');
+
 // Breeze tests expect these route names
 // POST login for regular users (Fortify)
 Route::post('/login', [AuthenticatedSessionController::class, 'store'])
@@ -60,6 +64,22 @@ Route::post('/rooms/{room}/upload', [WebRoomController::class, 'upload'])
     ->name('rooms.upload.post')
     ->middleware(['decrypt.room', 'room.multi.session']);
 
+Route::post('/rooms/{room}/confirm-receipt', [WebRoomController::class, 'confirmReceipt'])
+    ->name('rooms.confirm-receipt.post')
+    ->middleware(['decrypt.room', 'room.multi.session']);
+
+Route::post('/rooms/{room}/complete-transaction', [GmController::class, 'completeTransaction'])
+    ->name('rooms.complete-transaction.post')
+    ->middleware(['decrypt.room', 'room.multi.session']);
+
+Route::post('/rooms/{room}/extend', [WebRoomController::class, 'extend'])
+    ->name('rooms.extend.post')
+    ->middleware(['decrypt.room', 'room.multi.session']);
+
+Route::get('/rooms/{room}/files/{file}', [WebRoomController::class, 'download'])
+    ->name('rooms.files.download')
+    ->middleware(['decrypt.room', 'room.multi.session']);
+
 Route::get('/rooms/{room}/enter', [WebRoomJoinController::class, 'enter'])
     ->name('rooms.enter')
     ->middleware('decrypt.room');
@@ -94,6 +114,8 @@ Route::middleware(['auth:gm'])->group(function () {
     Route::get('dashboard', [GmController::class, 'dashboard'])->name('dashboard');
 
     Route::get('/room/{room}', [GmController::class, 'roomDetails'])->name('gm.room.details');
+    Route::post('/gm/rooms/{room}/join', [GmController::class, 'joinRoom'])->name('gm.rooms.join');
+    Route::post('/gm/rooms/{room}/reset', [GmController::class, 'resetRoom'])->name('gm.rooms.reset');
 
     // User Verification Management Routes
     Route::prefix('api/verifications')->group(function () {
@@ -120,6 +142,8 @@ Route::middleware(['auth:gm'])->group(function () {
     Route::get('/verifications/transactions/{transaction}', function (\App\Models\Transaction $transaction) {
         return redirect()->route('transactions.show', $transaction);
     })->name('verifications.transactions.show.legacy');
+
+    Route::get('/gm/rooms/{room}/files/{file}', [GmController::class, 'downloadFile'])->name('gm.rooms.files.download');
 });
 
 // WebSocket API Routes - Removed after cleanup
@@ -145,15 +169,15 @@ Route::prefix('rooms/invite')->group(function () {
     // Public invitation access
     Route::get('/{token}', [App\Http\Controllers\InvitationController::class, 'showInvitation'])
         ->name('rooms.invite.join')
-        ->middleware(['throttle:10,1']);
+        ->middleware(['throttle:10,1', 'invitation.pin']);
 
     Route::post('/{token}', [App\Http\Controllers\InvitationController::class, 'joinRoom'])
         ->name('rooms.invite.join.post')
-        ->middleware(['throttle:5,1']);
+        ->middleware(['throttle:5,1', 'invitation.pin']);
 
     Route::post('/{token}/verify-pin', [App\Http\Controllers\InvitationController::class, 'verifyPin'])
         ->name('rooms.invite.verify-pin')
-        ->middleware(['throttle:20,1']);
+        ->middleware(['throttle:20,1', 'invitation.pin']);
 
     Route::get('/{token}/expired', [App\Http\Controllers\Web\InvitationController::class, 'expired'])
         ->name('rooms.invite.expired');

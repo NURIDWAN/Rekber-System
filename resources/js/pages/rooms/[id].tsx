@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Head } from '@inertiajs/react'
+import { Head, Link } from '@inertiajs/react'
 import { useRoom } from '@/contexts/RoomContext'
 import { useAuth } from '@/contexts/AuthContext'
 import RekberProvider from '@/components/RekberProvider'
@@ -19,7 +19,8 @@ import {
   Clock,
   Truck,
   AlertCircle,
-  Settings
+  CreditCard,
+  Package
 } from 'lucide-react'
 import JoinRoomModal from '@/components/JoinRoomModal'
 import ChatInterface from '@/components/ChatInterface'
@@ -27,6 +28,57 @@ import FileUploadModal from '@/components/FileUploadModal'
 import ActivityTimeline from '@/components/ActivityTimeline'
 import ConnectionStatus from '@/components/ConnectionStatus'
 import transactionAPI, { UploadResponse } from '@/services/transaction-api'
+
+type UploadActionCardProps = {
+  title: string
+  description: string
+  icon: React.ReactNode
+  ctaLabel: string
+  enabled: boolean
+  disabledCopy: string
+  onClick: () => void
+}
+
+function UploadActionCard({
+  title,
+  description,
+  icon,
+  ctaLabel,
+  enabled,
+  disabledCopy,
+  onClick
+}: UploadActionCardProps) {
+  return (
+    <div
+      className={`rounded-xl border p-4 shadow-sm transition ${
+        enabled
+          ? 'border-blue-100 bg-white ring-1 ring-blue-50'
+          : 'border-dashed border-slate-200 bg-slate-50/60'
+      }`}
+    >
+      <div className="flex items-center gap-2 text-sm font-semibold text-gray-900">
+        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-50 text-blue-600">
+          {icon}
+        </span>
+        {title}
+      </div>
+      <p className="mt-2 text-xs text-gray-600 leading-relaxed">{description}</p>
+      <Button
+        onClick={onClick}
+        disabled={!enabled}
+        className={`mt-3 w-full justify-center ${
+          enabled ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-700 hover:to-indigo-700' : ''
+        }`}
+      >
+        <Upload className="w-4 h-4 mr-2" />
+        {ctaLabel}
+      </Button>
+      {!enabled && (
+        <p className="mt-2 text-[11px] text-gray-500">{disabledCopy}</p>
+      )}
+    </div>
+  )
+}
 
 function RoomDetailContent({ room }: { room: any }) {
   const { currentUser, isAuthenticated } = useAuth()
@@ -198,6 +250,8 @@ function RoomDetailContent({ room }: { room: any }) {
 
   const isUserInRoom = currentUser && selectedRoom.users.some(user => user.name === currentUser.name)
   const isGM = currentUser?.role === 'gm'
+  const paymentActionEnabled = currentUser?.role === 'buyer' && transactionStatus === 'pending_payment'
+  const receiptActionEnabled = currentUser?.role === 'seller' && transactionStatus === 'paid'
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -242,31 +296,54 @@ function RoomDetailContent({ room }: { room: any }) {
 
                   {/* Action buttons based on role and status */}
                   {isUserInRoom && transactionId && (
-                    <div className="flex flex-wrap gap-2">
-                      {currentUser?.role === 'buyer' && transactionStatus === 'pending_payment' && (
-                        <Button
-                          onClick={() => { setUploadType('payment'); setShowUploadModal(true) }}
-                          className="flex-1"
-                        >
-                          <Upload className="w-4 h-4 mr-2" />
-                          Upload Payment Proof
-                        </Button>
-                      )}
+                    <div className="space-y-4">
+                      <div className="rounded-2xl border border-blue-100 bg-blue-50/60 p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-semibold text-gray-900">Upload bukti pembayaran atau resi</p>
+                            <p className="mt-1 text-xs text-gray-600">
+                              Kirim file langsung ke GM untuk verifikasi lebih cepat dan aman.
+                            </p>
+                          </div>
+                          <Badge variant="outline" className="border-blue-200 bg-white text-blue-700">
+                            Butuh aksi
+                          </Badge>
+                        </div>
 
-                      {currentUser?.role === 'seller' && transactionStatus === 'paid' && (
-                        <Button
-                          onClick={() => { setUploadType('receipt'); setShowUploadModal(true) }}
-                          className="flex-1"
-                        >
-                          <Upload className="w-4 h-4 mr-2" />
-                          Upload Shipping Receipt
-                        </Button>
-                      )}
+                        <div className="mt-4 grid gap-3 md:grid-cols-2">
+                          <UploadActionCard
+                            title="Bukti pembayaran"
+                            description="Unggah bukti transfer supaya GM dapat memverifikasi dan membuka tahap selanjutnya."
+                            icon={<CreditCard className="w-4 h-4" />}
+                            ctaLabel="Upload bukti bayar"
+                            enabled={paymentActionEnabled}
+                            disabledCopy={
+                              currentUser?.role !== 'buyer'
+                                ? 'Hanya buyer yang bisa mengunggah bukti pembayaran.'
+                                : 'Menunggu status pembayaran dibuka oleh GM.'
+                            }
+                            onClick={() => { setUploadType('payment'); setShowUploadModal(true) }}
+                          />
+                          <UploadActionCard
+                            title="Resi pengiriman"
+                            description="Masukkan resi setelah pembayaran terverifikasi agar buyer bisa melacak paket."
+                            icon={<Package className="w-4 h-4" />}
+                            ctaLabel="Upload resi"
+                            enabled={receiptActionEnabled}
+                            disabledCopy={
+                              currentUser?.role !== 'seller'
+                                ? 'Hanya seller yang bisa mengunggah resi setelah pembayaran beres.'
+                                : 'Tunggu pembayaran dikonfirmasi sebelum kirim resi.'
+                            }
+                            onClick={() => { setUploadType('receipt'); setShowUploadModal(true) }}
+                          />
+                        </div>
+                      </div>
 
                       {currentUser?.role === 'buyer' && transactionStatus === 'shipped' && (
                         <Button
                           variant="outline"
-                          className="flex-1"
+                          className="w-full justify-center"
                           onClick={async () => {
                             if (!transactionId) return
                             try {
@@ -280,7 +357,7 @@ function RoomDetailContent({ room }: { room: any }) {
                           }}
                         >
                           <CheckCircle className="w-4 h-4 mr-2" />
-                          Confirm Receipt
+                          Konfirmasi barang diterima
                         </Button>
                       )}
                     </div>

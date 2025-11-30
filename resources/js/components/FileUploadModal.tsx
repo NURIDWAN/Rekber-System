@@ -50,25 +50,25 @@ export default function FileUploadModal({
   const getUploadConfig = () => {
     if (type === 'payment') {
       return {
-        title: 'Upload Payment Proof',
-        description: 'Share proof of payment for this transaction',
+        title: 'Upload Bukti Pembayaran',
+        description: 'Unggah bukti transfer, GM akan memverifikasi sebelum transaksi jalan.',
         icon: <CreditCard className="w-5 h-5" />,
         accept: {
           'image/*': ['.jpeg', '.jpg', '.png', '.gif']
         },
         maxSize: 5 * 1024 * 1024, // 5MB (backend limit)
-        helpText: 'Accepted formats: JPEG, PNG, JPG, GIF (Max 5MB)'
+        helpText: 'JPG, PNG, atau GIF • Maksimal 5MB'
       }
     } else {
       return {
-        title: 'Upload Shipping Receipt',
-        description: 'Share proof that the item has been shipped',
+        title: 'Upload Resi Pengiriman',
+        description: 'Unggah resi setelah pembayaran dikonfirmasi agar pembeli bisa melacak paket.',
         icon: <Package className="w-5 h-5" />,
         accept: {
           'image/*': ['.jpeg', '.jpg', '.png', '.gif']
         },
         maxSize: 5 * 1024 * 1024, // 5MB (backend limit)
-        helpText: 'Accepted formats: JPEG, PNG, JPG, GIF (Max 5MB)'
+        helpText: 'JPG, PNG, atau GIF • Maksimal 5MB'
       }
     }
   }
@@ -289,17 +289,17 @@ export default function FileUploadModal({
               {isUploading ? (
                 <>
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Uploading...
-                </>
-              ) : (
-                <>
-                  <Upload className="w-4 h-4 mr-2" />
-                  Upload {type === 'payment' ? 'Proof' : 'Receipt'}
-                </>
-              )}
-            </Button>
-          </div>
-        </div>
+              Uploading...
+            </>
+          ) : (
+            <>
+              <Upload className="w-4 h-4 mr-2" />
+              Upload {type === 'payment' ? 'bukti bayar' : 'resi'}
+            </>
+          )}
+        </Button>
+      </div>
+    </div>
       </DialogContent>
     </Dialog>
   )

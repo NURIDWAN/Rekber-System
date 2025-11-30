@@ -41,16 +41,30 @@ class RoomJoinController extends Controller
 
             // Find the room
             $room = Room::findOrFail($roomId);
+
+            // Validate PIN if enabled
+            if ($room->pin_enabled) {
+                if (empty($validated['pin'])) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'PIN is required for this room',
+                        'requires_pin' => true
+                    ], 401);
+                }
+
+                if ($validated['pin'] !== $room->pin) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Invalid PIN',
+                        'requires_pin' => true
+                    ], 401);
+                }
+            }
             $multiSessionManager = app(MultiSessionManager::class);
 
             // Get or create user identifier
-            $userIdentifier = $multiSessionManager->getUserIdentifierFromCookie();
-            if (!$userIdentifier) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unable to identify user',
-                ], 400);
-            }
+            $identifierResult = $multiSessionManager->ensureUserIdentifier($request);
+            $userIdentifier = $identifierResult['identifier'];
 
             // Check if user can join room with auto-switch logic
             $joinCheck = $multiSessionManager->canJoinRoom($roomId, $requestedRole, $userIdentifier);

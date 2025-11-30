@@ -65,6 +65,19 @@ class RoomJoinController extends Controller
                     break;
                 }
             }
+
+        }
+
+
+        // Check if user has active session in another room
+        if (!$roomUser && $userIdentifier) {
+            $check = $multiSessionManager->canJoinRoom($roomId, 'buyer', $userIdentifier);
+            if (!$check['can_join'] && isset($check['suggested_action']) && $check['suggested_action'] === 'redirect_to_active') {
+                $activeRoomId = $check['active_room_id'];
+                $encryptedActiveRoomId = $roomUrlService->encryptRoomId($activeRoomId);
+                return redirect()->route('rooms.show', ['room' => $encryptedActiveRoomId])
+                    ->with('error', $check['reason']);
+            }
         }
 
         if ($roomUser) {
@@ -125,6 +138,10 @@ class RoomJoinController extends Controller
 
         $room = Room::findOrFail($decrypted['room_id']);
 
+        if ($room->isExpired()) {
+            return abort(410, 'This room has expired');
+        }
+
         // Check if user already has a session for this room (multi-session aware)
         $userIdentifier = $multiSessionManager->getUserIdentifierFromCookie();
         $existingRoomUser = null;
@@ -134,7 +151,19 @@ class RoomJoinController extends Controller
             $existingRoomUser = RoomUser::where('room_id', $room->id)
                 ->where('user_identifier', $userIdentifier)
                 ->where('is_online', true)
+                ->where('is_online', true)
                 ->first();
+        }
+
+        // Check if user has active session in another room
+        if (!$existingRoomUser && $userIdentifier) {
+            $check = $multiSessionManager->canJoinRoom($room->id, $decrypted['role'], $userIdentifier);
+            if (!$check['can_join'] && isset($check['suggested_action']) && $check['suggested_action'] === 'redirect_to_active') {
+                $activeRoomId = $check['active_room_id'];
+                $encryptedActiveRoomId = $roomUrlService->encryptRoomId($activeRoomId);
+                return redirect()->route('rooms.show', ['room' => $encryptedActiveRoomId])
+                    ->with('error', $check['reason']);
+            }
         }
 
         // Fallback to namespaced cookies if identifier mismatch or missing
@@ -209,6 +238,12 @@ class RoomJoinController extends Controller
             ],
             'role' => $decrypted['role'],
             'share_links' => app(RoomUrlService::class)->generateShareableLinks($room->id),
+            'encrypted_urls' => [
+                'join_buyer' => $roomUrlService->generateJoinUrl($room->id, 'buyer'),
+                'join_seller' => $roomUrlService->generateJoinUrl($room->id, 'seller'),
+                'enter_buyer' => $roomUrlService->generateEnterUrl($room->id, 'buyer'),
+                'enter_seller' => $roomUrlService->generateEnterUrl($room->id, 'seller'),
+            ],
             'token' => $token
         ]);
     }
@@ -231,6 +266,11 @@ class RoomJoinController extends Controller
         }
 
         $roomModel = Room::findOrFail($decrypted['room_id']);
+
+        if ($roomModel->isExpired()) {
+            return abort(410, 'This room has expired');
+        }
+
         $roomId = $roomModel->id;
 
         // Check if user has session (multi-session aware)
@@ -241,7 +281,19 @@ class RoomJoinController extends Controller
         if ($userIdentifier) {
             $roomUser = RoomUser::where('room_id', $roomId)
                 ->where('user_identifier', $userIdentifier)
+                ->where('user_identifier', $userIdentifier)
                 ->first();
+        }
+
+        // Check if user has active session in another room
+        if (!$roomUser && $userIdentifier) {
+            $check = $multiSessionManager->canJoinRoom($roomId, $decrypted['role'], $userIdentifier);
+            if (!$check['can_join'] && isset($check['suggested_action']) && $check['suggested_action'] === 'redirect_to_active') {
+                $activeRoomId = $check['active_room_id'];
+                $encryptedActiveRoomId = $roomUrlService->encryptRoomId($activeRoomId);
+                return redirect()->route('rooms.show', ['room' => $encryptedActiveRoomId])
+                    ->with('error', $check['reason']);
+            }
         }
 
         if (!$roomUser) {

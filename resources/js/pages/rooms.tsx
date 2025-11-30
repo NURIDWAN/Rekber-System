@@ -9,7 +9,11 @@ import {
     CheckCircle,
     XCircle,
     Wifi,
+    Search,
+    Activity,
+    Users
 } from 'lucide-react';
+import RoomsNavbar from '@/components/RoomsNavbar';
 
 interface Room {
     id: number;
@@ -32,6 +36,8 @@ interface PageProps {
 export default function RoomsPage({ rooms: initialRooms }: PageProps) {
     const [rooms, setRooms] = useState<Room[]>(initialRooms);
     const [loading, setLoading] = useState(false);
+    const [statusFilter, setStatusFilter] = useState<'all' | 'free' | 'in_use'>('all');
+    const [search, setSearch] = useState('');
 
     useEffect(() => {
         const interval = setInterval(() => {
@@ -46,6 +52,23 @@ export default function RoomsPage({ rooms: initialRooms }: PageProps) {
     useEffect(() => {
         setRooms(initialRooms);
     }, [initialRooms]);
+
+    const filteredRooms = rooms.filter((room) => {
+        const matchStatus = statusFilter === 'all' ? true : room.status === statusFilter;
+        const matchSearch =
+            search.trim().length === 0 ||
+            room.room_number.toString().includes(search.trim()) ||
+            room.id.toString().includes(search.trim());
+        return matchStatus && matchSearch;
+    });
+
+    const summary = {
+        total: rooms.length,
+        free: rooms.filter((r) => r.status === 'free').length,
+        inUse: rooms.filter((r) => r.status === 'in_use').length,
+        activeUsers:
+            rooms.reduce((acc, r) => acc + (r.buyer_online ? 1 : 0) + (r.seller_online ? 1 : 0), 0),
+    };
 
     if (loading && rooms.length === 0) {
         return (
@@ -62,23 +85,77 @@ export default function RoomsPage({ rooms: initialRooms }: PageProps) {
         <>
             <Head title="Rooms - Rekber System" />
             <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
+                <RoomsNavbar />
                 <div className="absolute inset-0 -z-10">
                     <div className="absolute left-[10%] top-20 h-64 w-64 rounded-full bg-[#7da1ff]/20 blur-[110px]" />
                     <div className="absolute right-[8%] top-32 h-72 w-72 rounded-full bg-[#ffd89b]/30 blur-[120px]" />
                 </div>
 
-                <div className="mx-auto max-w-7xl px-4 py-8 lg:px-6">
-                    <div className="text-center mb-10">
-                        <h1 className="text-4xl font-bold text-slate-900 sm:text-5xl">
-                            Rekber Room System
-                        </h1>
-                        <p className="mt-4 text-lg text-slate-600">
-                            Choose a room to start your secure transaction
-                        </p>
+                <div className="mx-auto max-w-7xl px-4 pb-10 pt-6 lg:px-6">
+                    <div className="flex flex-col gap-6 rounded-3xl bg-white/80 px-6 py-6 shadow-lg ring-1 ring-slate-100 backdrop-blur">
+                        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                            <div>
+                                <p className="text-xs font-semibold uppercase tracking-[0.35em] text-blue-600">
+                                    Rooms
+                                </p>
+                                <h1 className="text-3xl font-bold text-slate-900 sm:text-4xl">
+                                    Rekber Room System
+                                </h1>
+                                <p className="mt-2 text-sm text-slate-600">
+                                    Pilih room yang siap digunakan, pantau status real-time buyer/seller.
+                                </p>
+                            </div>
+                            <div className="flex flex-wrap gap-3">
+                                <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+                                    <CheckCircle className="w-4 h-4 text-emerald-500" />
+                                    {summary.free} Free
+                                </div>
+                                <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-amber-50 px-3 py-2 text-sm">
+                                    <Activity className="w-4 h-4 text-amber-500" />
+                                    {summary.inUse} In Use
+                                </div>
+                                <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+                                    <Users className="w-4 h-4 text-blue-500" />
+                                    {summary.activeUsers} Aktif
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                            <div className="flex items-center gap-2">
+                                {(['all', 'free', 'in_use'] as const).map((item) => (
+                                    <button
+                                        key={item}
+                                        onClick={() => setStatusFilter(item)}
+                                        className={cn(
+                                            'rounded-full px-3 py-1 text-sm font-semibold border transition',
+                                            statusFilter === item
+                                                ? 'border-blue-500 bg-blue-50 text-blue-700 shadow-sm'
+                                                : 'border-slate-200 bg-white text-slate-600 hover:border-blue-200'
+                                        )}
+                                    >
+                                        {item === 'all'
+                                            ? 'Semua'
+                                            : item === 'free'
+                                            ? 'Free'
+                                            : 'In Use'}
+                                    </button>
+                                ))}
+                            </div>
+                            <div className="relative w-full md:w-72">
+                                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                                <input
+                                    value={search}
+                                    onChange={(e) => setSearch(e.target.value)}
+                                    placeholder="Cari room..."
+                                    className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm text-slate-700 shadow-sm outline-none ring-0 transition focus:border-blue-400 focus:shadow-md"
+                                />
+                            </div>
+                        </div>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-                        {rooms.map((room) => (
+                    <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                        {filteredRooms.map((room) => (
                             <div
                                 key={room.id}
                                 className={cn(

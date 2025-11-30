@@ -13,18 +13,20 @@ return new class extends Migration {
     {
         // We need to use raw SQL to update the enum column because Doctrine DBAL has issues with enums sometimes
         // and we want to append values.
-        DB::statement("ALTER TABLE transactions MODIFY COLUMN status ENUM(
-            'pending_payment', 
-            'awaiting_payment_verification',
-            'paid', 
-            'awaiting_shipping_verification',
-            'shipped', 
-            'delivered', 
-            'completed', 
-            'disputed', 
-            'cancelled', 
-            'refunded'
-        ) NOT NULL DEFAULT 'pending_payment'");
+        if (DB::getDriverName() !== 'sqlite') {
+            DB::statement("ALTER TABLE transactions MODIFY COLUMN status ENUM(
+                'pending_payment', 
+                'awaiting_payment_verification',
+                'paid', 
+                'awaiting_shipping_verification',
+                'shipped', 
+                'delivered', 
+                'completed', 
+                'disputed', 
+                'cancelled', 
+                'refunded'
+            ) NOT NULL DEFAULT 'pending_payment'");
+        }
     }
 
     /**

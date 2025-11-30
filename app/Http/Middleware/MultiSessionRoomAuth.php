@@ -55,13 +55,8 @@ class MultiSessionRoomAuth
         }
 
         // Get or create user identifier
-        $userIdentifier = $multiSessionManager->getUserIdentifierFromCookie();
-        if (!$userIdentifier) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Unable to identify user',
-            ], 400);
-        }
+        $identifierResult = $multiSessionManager->ensureUserIdentifier($request);
+        $userIdentifier = $identifierResult['identifier'];
 
         // Try to find active session with multiple fallback methods
         $result = $this->findRoomUserWithFallback($roomId, $userIdentifier, $request);

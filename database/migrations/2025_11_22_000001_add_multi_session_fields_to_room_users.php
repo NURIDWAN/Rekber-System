@@ -4,8 +4,7 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-return new class extends Migration
-{
+return new class extends Migration {
     /**
      * Run the migrations.
      */
@@ -29,11 +28,22 @@ return new class extends Migration
         });
 
         // Set user_identifier for existing records using session_token as base
-        \DB::statement("
-            UPDATE room_users
-            SET user_identifier = CONCAT('legacy_user_', SUBSTRING(session_token, 1, 16), '_', UNIX_TIMESTAMP(created_at))
-            WHERE user_identifier IS NULL
-        ");
+        // Set user_identifier for existing records using session_token as base
+        if (\DB::getDriverName() === 'sqlite') {
+            \DB::table('room_users')->whereNull('user_identifier')->chunkById(100, function ($users) {
+                foreach ($users as $user) {
+                    \DB::table('room_users')->where('id', $user->id)->update([
+                        'user_identifier' => 'legacy_user_' . substr($user->session_token, 0, 16) . '_' . strtotime($user->created_at)
+                    ]);
+                }
+            });
+        } else {
+            \DB::statement("
+                UPDATE room_users
+                SET user_identifier = CONCAT('legacy_user_', SUBSTRING(session_token, 1, 16), '_', UNIX_TIMESTAMP(created_at))
+                WHERE user_identifier IS NULL
+            ");
+        }
     }
 
     /**

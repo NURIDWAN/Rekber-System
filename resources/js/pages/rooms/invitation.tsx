@@ -30,6 +30,7 @@ interface Props {
     invitation: Invitation;
     room: Room;
     token: string;
+    requires_pin?: boolean;
     auth?: {
         user: {
             id: number;
@@ -39,10 +40,10 @@ interface Props {
     };
 }
 
-export default function Invitation({ invitation, room, token, auth }: Props) {
+export default function Invitation({ invitation, room, token, requires_pin = true, auth }: Props) {
     const [showPinModal, setShowPinModal] = useState(false);
     const [isAuthenticated, setIsAuthenticated] = useState(!!auth);
-    const [needsPin, setNeedsPin] = useState(true);
+    const [needsPin, setNeedsPin] = useState(requires_pin);
     const [joining, setJoining] = useState(false);
 
     const { post, processing } = useForm({});

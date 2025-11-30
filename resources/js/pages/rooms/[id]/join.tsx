@@ -2,6 +2,7 @@ import { Head, Link, router, useForm } from '@inertiajs/react';
 import { useState, useEffect } from 'react';
 import { cn } from '@/lib/utils';
 import { ArrowLeft, User, ShoppingCart, Lock, Shield, CheckCircle, XCircle } from 'lucide-react';
+import PinEntryModal from '@/components/PinEntryModal';
 
 interface PageProps {
     room: {
@@ -37,12 +38,14 @@ export default function JoinRoomPage({ room, role, share_links, encrypted_urls, 
         name: '',
         phone: '',
         role: role,
+        pin: share_links.pin || '',
     });
 
     const [selectedRole, setSelectedRole] = useState<'buyer' | 'seller'>(role);
     const [joining, setJoining] = useState(false);
     const [joinError, setJoinError] = useState<string | null>(null);
     const [existingUser, setExistingUser] = useState<boolean>(false);
+    const [showPinModal, setShowPinModal] = useState(false);
     const isBuyer = selectedRole === 'buyer';
 
     // Check if user already exists for this role
@@ -100,6 +103,23 @@ export default function JoinRoomPage({ room, role, share_links, encrypted_urls, 
             return;
         }
 
+        // Check if PIN is required but missing
+        if (share_links.pin_enabled && !share_links.pin && !data.pin) {
+            setShowPinModal(true);
+            return;
+        }
+
+        await submitJoinRequest();
+    };
+
+    const handlePinSubmit = (pin: string) => {
+        setData('pin', pin);
+        // Don't close modal immediately, let the request finish
+        // setShowPinModal(false); 
+        submitJoinRequest(pin);
+    };
+
+    const submitJoinRequest = async (manualPin?: string) => {
         const link = share_links[selectedRole]?.join;
         const token = getTokenFromLink(link);
         if (!token) {
@@ -113,12 +133,14 @@ export default function JoinRoomPage({ room, role, share_links, encrypted_urls, 
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
+                    'Accept': 'application/json',
                     'X-CSRF-TOKEN': (document.querySelector('meta[name="csrf-token"]') as HTMLMetaElement)?.content || '',
                 },
+                credentials: 'include',
                 body: JSON.stringify({
                     name: data.name,
                     phone: data.phone,
-                    pin: share_links.pin ?? null,
+                    pin: manualPin || data.pin || share_links.pin || null,
                 })
             });
 
@@ -158,7 +180,7 @@ export default function JoinRoomPage({ room, role, share_links, encrypted_urls, 
                 const existingSessions = JSON.parse(localStorage.getItem('rekber_sessions') || '[]');
 
                 // Remove any existing session for the same room
-                const filteredSessions = existingSessions.filter(s => s.roomId !== roomId);
+                const filteredSessions = existingSessions.filter((s: any) => s.roomId !== roomId);
 
                 // Add new session
                 filteredSessions.push(sessionInfo);
@@ -323,9 +345,9 @@ export default function JoinRoomPage({ room, role, share_links, encrypted_urls, 
                                 </div>
                             </div>
 
-                            {errors.general && (
+                            {(errors as any).general && (
                                 <div className="mb-4 rounded-xl bg-red-50 border border-red-200 p-4">
-                                    <p className="text-sm text-red-600">{errors.general}</p>
+                                    <p className="text-sm text-red-600">{(errors as any).general}</p>
                                 </div>
                             )}
 
@@ -432,6 +454,15 @@ export default function JoinRoomPage({ room, role, share_links, encrypted_urls, 
                     </div>
                 </div>
             </div>
+
+            <PinEntryModal
+                isOpen={showPinModal}
+                onClose={() => setShowPinModal(false)}
+                onSubmit={handlePinSubmit}
+                roomNumber={room.room_number}
+                isLoading={joining}
+                error={joinError}
+            />
         </>
     );
 }

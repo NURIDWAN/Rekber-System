@@ -110,6 +110,7 @@ export interface TransactionFile {
   file_size_formatted?: string
   // Relationships
   verifier?: any
+  transaction?: TransactionDetails
 }
 
 class TransactionAPI {
@@ -131,7 +132,7 @@ class TransactionAPI {
           }
         }
       )
-      return handleFileUploadResponse(response.data, file.name)
+      return handleFileUploadResponse(response.data, file.name) as UploadResponse
     } catch (error: any) {
       return handleApiError(error)
     }
@@ -155,7 +156,7 @@ class TransactionAPI {
           }
         }
       )
-      return handleFileUploadResponse(response.data, file.name)
+      return handleFileUploadResponse(response.data, file.name) as UploadResponse
     } catch (error: any) {
       return handleApiError(error)
     }
@@ -167,7 +168,7 @@ class TransactionAPI {
   async getTransactionByRoomId(roomId: number): Promise<{ success: boolean; data: TransactionDetails }> {
     try {
       const response = await axios.get(`${API_BASE}/transactions/by-room/${roomId}`)
-      return handleApiResponse(response.data, { showSuccessOnSuccess: false, showErrorOnError: false })
+      return handleApiResponse(response.data, { showSuccessOnSuccess: false, showErrorOnError: false }) as { success: boolean; data: TransactionDetails }
     } catch (error: any) {
       return handleApiError(error)
     }
@@ -179,7 +180,7 @@ class TransactionAPI {
   async getTransactionDetails(transactionId: number): Promise<{ success: boolean; data: TransactionDetails }> {
     try {
       const response = await axios.get(`${API_BASE}/transactions/${transactionId}`)
-      return handleApiResponse(response.data, { showSuccessOnSuccess: false, showErrorOnError: false })
+      return handleApiResponse(response.data, { showSuccessOnSuccess: false, showErrorOnError: false }) as { success: boolean; data: TransactionDetails }
     } catch (error: any) {
       return handleApiError(error)
     }
@@ -327,7 +328,7 @@ class TransactionAPI {
           'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || ''
         }
       })
-      return handleVerificationResponse(response.data, 'payment', action)
+      return handleVerificationResponse(response.data, 'payment', action) as UploadResponse
     } catch (error: any) {
       return handleApiError(error)
     }
@@ -346,7 +347,7 @@ class TransactionAPI {
           'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || ''
         }
       })
-      return handleVerificationResponse(response.data, 'shipping', action)
+      return handleVerificationResponse(response.data, 'shipping', action) as UploadResponse
     } catch (error: any) {
       return handleApiError(error)
     }

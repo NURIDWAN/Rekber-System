@@ -19,6 +19,8 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Inertia\Inertia;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\RedirectResponse;
+use App\Services\TransactionService;
 
 class RoomController extends Controller
 {
@@ -27,6 +29,34 @@ class RoomController extends Controller
      */
     public function index()
     {
+        // Check if user has active session in another room
+        $multiSessionManager = app(MultiSessionManager::class);
+        $userIdentifier = $multiSessionManager->getUserIdentifierFromCookie();
+
+        if ($userIdentifier) {
+            // Check for any active session where user is a participant
+            // "Active" means room is not completed and not expired
+            $activeSession = RoomUser::where('user_identifier', $userIdentifier)
+                ->where('is_online', true)
+                ->whereHas('room', function ($query) {
+                    $query->where('status', '!=', 'completed')
+                        ->where(function ($q) {
+                            $q->whereNull('expires_at')
+                                ->orWhere('expires_at', '>', now());
+                        });
+                })
+                ->with('room')
+                ->first();
+
+            if ($activeSession) {
+                $roomUrlService = app(RoomUrlService::class);
+                $encryptedActiveRoomId = $roomUrlService->encryptRoomId($activeSession->room_id);
+
+                return redirect()->route('rooms.show', ['room' => $encryptedActiveRoomId])
+                    ->with('warning', 'Anda sedang aktif di room lain. Selesaikan sesi tersebut sebelum melihat daftar room.');
+            }
+        }
+
         $rooms = Room::with([
             'users' => function ($query) {
                 $query->select('id', 'room_id', 'name', 'role', 'is_online');
@@ -92,6 +122,19 @@ class RoomController extends Controller
                 ->where('user_identifier', $userIdentifier)
                 ->where('is_online', true)
                 ->first();
+
+        }
+
+        // Check if user has active session in another room
+        if (!$existingUser && $userIdentifier) {
+            $check = $multiSessionManager->canJoinRoom($roomModel->id, 'buyer', $userIdentifier);
+            if (!$check['can_join'] && isset($check['suggested_action']) && $check['suggested_action'] === 'redirect_to_active') {
+                $activeRoomId = $check['active_room_id'];
+                $roomUrlService = app(RoomUrlService::class);
+                $encryptedActiveRoomId = $roomUrlService->encryptRoomId($activeRoomId);
+                return redirect()->route('rooms.show', ['room' => $encryptedActiveRoomId])
+                    ->with('error', $check['reason']);
+            }
         }
 
         return Inertia::render('rooms/[id]/join', [
@@ -105,9 +148,14 @@ class RoomController extends Controller
                 'seller_name' => $roomModel->users()->where('role', 'seller')->first()?->name,
                 'current_user_role' => $existingUser?->role,
                 'current_user_name' => $existingUser?->name,
+                'expires_at' => $roomModel->expires_at,
+                'is_expired' => $roomModel->isExpired(),
             ],
             'role' => request()->get('role', 'buyer'),
-            'share_links' => $roomUrlService->generateShareableLinks($roomModel->id),
+            'share_links' => array_merge(
+                $roomUrlService->generateShareableLinks($roomModel->id),
+                ['pin_enabled' => $roomModel->pin_enabled]
+            ),
             'encrypted_urls' => [
                 'join_buyer' => $roomUrlService->generateJoinUrl($roomModel->id, 'buyer'),
                 'join_seller' => $roomUrlService->generateJoinUrl($roomModel->id, 'seller'),
@@ -138,21 +186,29 @@ class RoomController extends Controller
             return back()->withErrors(['general' => 'Room is not available for seller']);
         }
 
-        // Check if user is already in another room
-        $existingSession = $request->cookie('room_session_token');
-        if ($existingSession) {
-            $existingUser = RoomUser::where('session_token', $existingSession)->first();
-            if ($existingUser) {
-                return back()->withErrors(['general' => 'You are already in another room']);
+        // Validate PIN if enabled
+        if ($roomModel->pin_enabled) {
+            $pin = $request->input('pin');
+            if (empty($pin)) {
+                return back()->withErrors(['pin' => 'PIN is required for this room']);
+            }
+
+            if ($pin !== $roomModel->pin) {
+                return back()->withErrors(['pin' => 'Invalid PIN']);
             }
         }
 
-        // Create room user
+        // Check if user is already in another room
         $multiSessionManager = app(MultiSessionManager::class);
-
-        // Get or create user identifier
         $identifierResult = $multiSessionManager->ensureUserIdentifier($request);
         $userIdentifier = $identifierResult['identifier'];
+
+        $check = $multiSessionManager->canJoinRoom($roomModel->id, $role, $userIdentifier);
+        if (!$check['can_join'] && isset($check['suggested_action']) && $check['suggested_action'] === 'redirect_to_active') {
+            return back()->withErrors(['general' => $check['reason']]);
+        }
+
+
 
         $sessionToken = $multiSessionManager->generateSessionToken($roomModel->id, $role, $userIdentifier);
         $cookieName = $multiSessionManager->generateCookieName($roomModel->id, $role, $userIdentifier);
@@ -248,6 +304,11 @@ class RoomController extends Controller
         $roomUrlService = app(RoomUrlService::class);
         $encryptedRoomId = request('encrypted_room_id') ?: $roomUrlService->encryptRoomId($roomModel->id);
 
+        // Generate share links with persisted PIN if enabled
+        $shareLinks = $roomUrlService->generateShareableLinks($roomModel->id, $roomModel->pin_enabled ? $roomModel->pin : null);
+        $shareLinks['pin'] = $roomModel->pin;
+        $shareLinks['pin_enabled'] = $roomModel->pin_enabled;
+
         return Inertia::render('rooms/[id]/index', [
             'room' => [
                 'id' => $roomModel->id,
@@ -273,13 +334,21 @@ class RoomController extends Controller
                         'created_at' => $message->created_at,
                     ];
                 }),
+                'files' => $roomModel->transactionFiles->map(function ($file) {
+                    return [
+                        'id' => $file->id,
+                        'file_path' => $file->file_path,
+                        'file_name' => $file->file_name,
+                        'file_type' => $file->file_type,
+                    ];
+                }),
             ],
             'currentUser' => [
                 'role' => $roomUser->role,
                 'name' => $roomUser->name,
                 'is_online' => $roomUser->is_online,
             ],
-            'share_links' => $roomUrlService->generateShareableLinks($roomModel->id),
+            'share_links' => $shareLinks,
             'encrypted_room_id' => $encryptedRoomId,
             'encrypted_urls' => [
                 'join_buyer' => $roomUrlService->generateJoinUrl($roomModel->id, 'buyer'),
@@ -382,7 +451,7 @@ class RoomController extends Controller
     /**
      * Upload file to room.
      */
-    public function upload(Request $request, $room): JsonResponse
+    public function upload(Request $request, $room)
     {
         // This method uses MultiSessionRoomAuth middleware
         $roomModel = request('current_room');
@@ -395,9 +464,14 @@ class RoomController extends Controller
             ], 401);
         }
 
+        if ($roomUser->role === 'gm') {
+            return back()->withErrors(['file' => 'GM cannot upload transaction files']);
+        }
+
         $validated = $request->validate([
             'file' => 'required|file|image|max:5120', // 5MB max
             'file_type' => ['required', 'in:payment_proof,shipping_receipt'],
+            'amount' => 'required_if:file_type,payment_proof|numeric|min:0',
         ]);
 
         try {
@@ -408,16 +482,21 @@ class RoomController extends Controller
                     'status' => 'pending_payment',
                     'buyer_id' => $roomModel->users()->where('role', 'buyer')->first()?->id,
                     'seller_id' => $roomModel->users()->where('role', 'seller')->first()?->id,
-                    'amount' => 0, // Will be set by GM
+                    'amount' => $request->input('amount', 0),
                     'currency' => 'IDR',
                     'description' => "Transaction for Room #{$roomModel->room_number}",
                 ]
             );
 
+            // Update amount if provided and transaction is still pending payment
+            if ($request->has('amount') && $transaction->status === 'pending_payment') {
+                $transaction->update(['amount' => $request->input('amount')]);
+            }
+
             // Upload file
             $file = $request->file('file');
             $filename = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
-            $path = $file->storeAs('room-files/' . $roomModel->id . '/' . $validated['file_type'], $filename, 'public');
+            $path = $file->storeAs('room-files/' . $roomModel->id . '/' . $validated['file_type'], $filename, 'local');
 
             // Create transaction file record
             $transactionFile = TransactionFile::create([
@@ -439,12 +518,14 @@ class RoomController extends Controller
                     'payment_proof_uploaded_at' => now(),
                     'payment_proof_uploaded_by' => $roomUser->id,
                 ]);
+                $roomModel->update(['status' => 'payment_pending']);
             } elseif ($validated['file_type'] === 'shipping_receipt' && $transaction->status === 'paid') {
                 $transaction->update([
                     'status' => 'awaiting_shipping_verification',
                     'shipping_receipt_uploaded_at' => now(),
                     'shipping_receipt_uploaded_by' => $roomUser->id,
                 ]);
+                $roomModel->update(['status' => 'shipped']);
             }
 
             // Create system message about file upload
@@ -474,13 +555,7 @@ class RoomController extends Controller
             // Broadcast file upload
             broadcast(new RoomMessageSent($message))->toOthers();
 
-            return response()->json([
-                'success' => true,
-                'file_url' => Storage::url($path),
-                'message' => $description,
-                'transaction_id' => $transaction->id,
-                'transaction_status' => $transaction->status,
-            ]);
+            return back()->with('success', $description);
         } catch (\Exception $e) {
             Log::error('Upload failed', [
                 'error' => $e->getMessage(),
@@ -489,10 +564,99 @@ class RoomController extends Controller
                 'user_id' => $roomUser->id,
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Upload failed: ' . $e->getMessage(),
-            ], 500);
+            return back()->withErrors(['file' => 'Upload failed: ' . $e->getMessage()]);
         }
+    }
+
+    /**
+     * Confirm receipt of goods.
+     */
+    public function confirmReceipt(Request $request, $room)
+    {
+        // This method uses MultiSessionRoomAuth middleware
+        $roomModel = request('current_room');
+        $roomUser = request('current_room_user');
+
+        if (!$roomModel || !$roomUser) {
+            return back()->withErrors(['general' => 'Unauthorized for this room']);
+        }
+
+        if ($roomUser->role !== 'buyer') {
+            return back()->withErrors(['general' => 'Only buyer can confirm receipt']);
+        }
+
+        try {
+            $transactionService = new TransactionService();
+            $result = $transactionService->confirmReceipt($roomModel, $roomUser);
+
+            if ($result['success']) {
+                // Broadcast update is handled in service or we can do it here if needed
+                // Service broadcasts RoomMessageSent?
+                // Service code: broadcast(new RoomMessageSent($room, $result['data'], $roomUser)); is in Api/RoomController, not Service
+                // Service returns 'data' which is the message model.
+
+                // We should broadcast the message
+                broadcast(new RoomMessageSent($result['data']))->toOthers();
+
+                return back()->with('success', 'Barang berhasil dikonfirmasi!');
+            }
+
+            return back()->withErrors(['general' => $result['message']]);
+        } catch (\Exception $e) {
+            Log::error('Confirm receipt failed', [
+                'error' => $e->getMessage(),
+                'room_id' => $roomModel->id,
+            ]);
+            return back()->withErrors(['general' => 'Failed to confirm receipt']);
+        }
+    }
+
+    /**
+     * Extend room expiry.
+     */
+    public function extend(Request $request, $room)
+    {
+        $roomModel = Room::findOrFail($room);
+
+        // Add 24 hours to current expiry or now if already expired
+        $newExpiry = $roomModel->expires_at && $roomModel->expires_at->isFuture()
+            ? $roomModel->expires_at->addDay()
+            : now()->addDay();
+
+        $roomModel->update([
+            'expires_at' => $newExpiry
+        ]);
+
+        return back()->with('success', 'Room duration extended by 24 hours.');
+    }
+
+    /**
+     * Download file securely.
+     */
+    public function download(Request $request, $room, $file)
+    {
+        // This method uses MultiSessionRoomAuth middleware
+        $roomModel = request('current_room');
+        $roomUser = request('current_room_user');
+
+        if (!$roomModel || !$roomUser) {
+            abort(403, 'Unauthorized');
+        }
+
+        $transactionFile = TransactionFile::where('room_id', $roomModel->id)
+            ->where('id', $file)
+            ->firstOrFail();
+
+        // Check private storage (new uploads)
+        if (Storage::disk('local')->exists($transactionFile->file_path)) {
+            return response()->file(storage_path('app/private/' . $transactionFile->file_path));
+        }
+
+        // Check public storage (legacy uploads)
+        if (Storage::disk('public')->exists($transactionFile->file_path)) {
+            return response()->file(storage_path('app/public/' . $transactionFile->file_path));
+        }
+
+        abort(404);
     }
 }

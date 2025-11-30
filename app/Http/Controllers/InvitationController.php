@@ -141,6 +141,7 @@ class InvitationController extends Controller
                 ]
             ],
             'token' => $token,
+            'requires_pin' => true,
             'auth' => auth()->check() ? [
                 'user' => [
                     'id' => auth()->id(),

@@ -3,7 +3,7 @@ import React, { createContext, useContext, useReducer, useEffect, ReactNode } fr
 interface SessionInfo {
   roomId: number;
   roomNumber: number;
-  role: 'buyer' | 'seller';
+  role: 'buyer' | 'seller' | 'gm';
   cookieName: string;
   userIdentifier: string;
   userName: string;
@@ -17,7 +17,7 @@ interface MultiSessionState {
   sessions: SessionInfo[];
   userIdentifier: string | null;
   activeRoomId: number | null;
-  currentRole: 'buyer' | 'seller' | null;
+  currentRole: 'buyer' | 'seller' | 'gm' | null;
   isLoading: boolean;
   error: string | null;
 }
@@ -29,7 +29,7 @@ type MultiSessionAction =
   | { type: 'ADD_SESSION'; payload: SessionInfo }
   | { type: 'REMOVE_SESSION'; payload: number } // roomId
   | { type: 'UPDATE_SESSION'; payload: { roomId: number; updates: Partial<SessionInfo> } }
-  | { type: 'SET_ACTIVE_ROOM'; payload: { roomId: number; role: 'buyer' | 'seller' } }
+  | { type: 'SET_ACTIVE_ROOM'; payload: { roomId: number; role: 'buyer' | 'seller' | 'gm' } }
   | { type: 'CLEAR_ALL_SESSIONS' }
   | { type: 'LOAD_SESSIONS'; payload: SessionInfo[] };
 
@@ -114,14 +114,14 @@ interface MultiSessionContextType extends MultiSessionState {
   addSession: (session: SessionInfo) => void;
   removeSession: (roomId: number) => void;
   updateSession: (roomId: number, updates: Partial<SessionInfo>) => void;
-  setActiveRoom: (roomId: number, role: 'buyer' | 'seller') => void;
+  setActiveRoom: (roomId: number, role: 'buyer' | 'seller' | 'gm') => void;
   clearAllSessions: () => void;
   getSessionByRoomId: (roomId: number) => SessionInfo | null;
   getActiveSession: () => SessionInfo | null;
   getOtherActiveSessions: () => SessionInfo[];
   getUserIdentifier: () => string | null;
   migrateLegacySessions: () => void;
-  switchRoleInRoom: (roomId: number, newRole: 'buyer' | 'seller') => boolean;
+  switchRoleInRoom: (roomId: number, newRole: 'buyer' | 'seller' | 'gm') => boolean;
 }
 
 const MultiSessionContext = createContext<MultiSessionContextType | undefined>(undefined);
@@ -273,7 +273,7 @@ export function MultiSessionProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'UPDATE_SESSION', payload: { roomId, updates } });
   };
 
-  const setActiveRoom = (roomId: number, role: 'buyer' | 'seller') => {
+  const setActiveRoom = (roomId: number, role: 'buyer' | 'seller' | 'gm') => {
     dispatch({ type: 'SET_ACTIVE_ROOM', payload: { roomId, role } });
   };
 
@@ -307,7 +307,7 @@ export function MultiSessionProvider({ children }: { children: ReactNode }) {
     return state.userIdentifier || getCookieValue('rekber_user_identifier');
   };
 
-  const switchRoleInRoom = (roomId: number, newRole: 'buyer' | 'seller'): boolean => {
+  const switchRoleInRoom = (roomId: number, newRole: 'buyer' | 'seller' | 'gm'): boolean => {
     const session = getSessionByRoomId(roomId);
     if (!session || session.role === newRole) {
       return false;

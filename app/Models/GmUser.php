@@ -26,6 +26,15 @@ class GmUser extends Authenticatable
         'email_verified_at' => 'datetime',
     ];
 
+    protected $appends = [
+        'role',
+    ];
+
+    public function getRoleAttribute()
+    {
+        return 'gm';
+    }
+
     public function setPasswordAttribute($value)
     {
         $this->attributes['password'] = Hash::make($value);

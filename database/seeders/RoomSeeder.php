@@ -21,6 +21,7 @@ class RoomSeeder extends Seeder
                 'status' => 'free',
                 'created_at' => now(),
                 'updated_at' => now(),
+                'expires_at' => now()->addDays(3),
             ];
         }
 

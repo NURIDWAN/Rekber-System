@@ -14,11 +14,28 @@ class Room extends Model
     protected $fillable = [
         'room_number',
         'status',
+        'pin',
+        'pin_enabled',
+        'expires_at',
     ];
 
     protected $casts = [
         'status' => 'string',
+        'pin_enabled' => 'boolean',
+        'expires_at' => 'datetime',
     ];
+
+    /**
+     * The "booted" method of the model.
+     */
+    protected static function booted(): void
+    {
+        static::creating(function ($room) {
+            if (!$room->expires_at) {
+                $room->expires_at = now()->addDays(7);
+            }
+        });
+    }
 
     public function roomUsers(): HasMany
     {
@@ -100,7 +117,7 @@ class Room extends Model
         return $this->hasBuyer() && $this->hasSeller();
     }
 
-  
+
     /**
      * Get the active transaction for this room.
      */
@@ -162,5 +179,13 @@ class Room extends Model
     public function shippingReceiptFiles()
     {
         return $this->transactionFiles()->where('file_type', 'shipping_receipt');
+    }
+
+    /**
+     * Check if the room is expired
+     */
+    public function isExpired(): bool
+    {
+        return $this->expires_at && $this->expires_at->isPast();
     }
 }

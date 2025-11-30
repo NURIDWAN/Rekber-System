@@ -11,9 +11,10 @@ use Illuminate\Support\Str;
 class RoomUrlService
 {
     /**
-     * Token expiry time in minutes
+     * Token expiry time in minutes (5 years - effectively long-lived)
+     * Expiry is now handled by the Room model's expires_at column
      */
-    const TOKEN_EXPIRY_MINUTES = 5;
+    const TOKEN_EXPIRY_MINUTES = 2628000;
 
     /**
      * Length of HMAC signature segment (hex characters)
@@ -265,7 +266,8 @@ class RoomUrlService
             return false;
         }
 
-        $expectedHash = hash('sha256',
+        $expectedHash = hash(
+            'sha256',
             $payload['room_id'] .
             $payload['role'] .
             $payload['timestamp'] .
@@ -387,7 +389,7 @@ class RoomUrlService
      * @param int $hoursValid
      * @return RoomInvitation
      */
-    public function createInvitation($room, $inviter, string $email, string $role, int $hoursValid = 24): RoomInvitation
+    public function createInvitation($room, $inviter, string $email, string $role, int $hoursValid = 168): RoomInvitation
     {
         $invitation = RoomInvitation::createInvitation($room, $inviter, $email, $role, $hoursValid);
         $invitation->generateEncryptedToken();
